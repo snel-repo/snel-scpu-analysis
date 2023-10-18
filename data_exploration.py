@@ -3,8 +3,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # %% Load data
-spike_clusters = np.load("data/spike_clusters.npy")
-spike_times = np.load("data/spike_times.npy")
+spike_clusters = np.load("/snel/share/share/data/scpu_data/spike_clusters.npy")
+spike_times = np.load("/snel/share/share/data/scpu_data/spike_times.npy")
 
 # %% Create a unique list of cluster IDs
 cluster_ids = np.unique(spike_clusters)
