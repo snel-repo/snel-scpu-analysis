@@ -1,0 +1,3 @@
+[submodule "nwb_convert"]
+	path = nwb_convert
+	url = git@github.com:snel-repo/nwb_convert.git
