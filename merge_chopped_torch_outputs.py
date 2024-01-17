@@ -194,6 +194,16 @@ time_vec = np.arange(pre_offset_ms, post_offset_ms, BIN_WIDTH)
 events = dataset.trial_info[dataset.trial_info.event_type == "stimulation"].trial_id.values
 
 fig, axs = plt.subplots(2, len(chans), figsize=(10,3.5), dpi=150)
+# Create a big subplot
+big_ax = fig.add_subplot(111, frameon=False)
+# Hide tick and tick label of the big subplot
+big_ax.tick_params(labelcolor='none', top=False, bottom=False, left=False, right=False)
+big_ax.grid(False)
+
+# Set the labels
+big_ax.set_xlabel('Time (ms) relative to stim. onset', labelpad=5)
+big_ax.set_ylabel('Stim. trial #', labelpad=-15)
+
 axs = axs.flatten()
 
 for i, chan in enumerate(chans):
