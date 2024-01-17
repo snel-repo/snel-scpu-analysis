@@ -214,7 +214,7 @@ for i, chan in enumerate(chans):
         axs[i].pcolor(np.array(trial_dat_spikes), cmap=colormap.bone_r, vmin=0, vmax=2)    
         axs[i].set_title(f"channel {chan}", fontsize=8)
         axs[i].vlines(stim_line_x, 0, len(trial_dat_lfads), color="r")
-        xticks = axs[0].get_xticks().astype(int)
+        xticks = axs[i].get_xticks().astype(int)
         xticks = xticks*BIN_WIDTH + pre_offset_ms
         axs[i].set_xticklabels(xticks)
         #ax.set_ylabel("trials")
@@ -224,7 +224,7 @@ for i, chan in enumerate(chans):
         axs[i+len(chans)].pcolor(np.array(trial_dat_lfads), cmap='viridis', vmin=0, vmax=np.max(np.array(trial_dat_lfads)))    
         axs[i+len(chans)].set_title(f"channel {chan}", fontsize=8)
         axs[i+len(chans)].vlines(stim_line_x, 0, len(trial_dat_lfads), color="r")
-        xticks = axs[1].get_xticks().astype(int)
+        xticks = axs[i+len(chans)].get_xticks().astype(int)
         xticks = xticks*BIN_WIDTH + pre_offset_ms
         axs[i+len(chans)].set_xticklabels(xticks)
         #ax.set_ylabel("trials")
