@@ -54,8 +54,8 @@ ax.spines['top'].set_visible(False)
 
 # %%
 
-start_chan_ix = 81
-plot_n_chans = 9
+start_chan_ix = 75
+plot_n_chans = 1
 
 width = np.ceil(np.sqrt(plot_n_chans)).astype(int)
 height = np.floor(np.sqrt(plot_n_chans)).astype(int)
@@ -65,6 +65,8 @@ stim_line_x = -1*(pre_offset_ms / BIN_WIDTH)
 time_vec = np.arange(pre_offset_ms, post_offset_ms, BIN_WIDTH)
 events = ds.trial_info[ds.trial_info.event_type == "stimulation"].trial_id.values
 fig, axs = plt.subplots(width, height, figsize=(6,6), dpi=150)
+if isinstance(axs, plt.Axes):
+    axs = np.array([axs])
 axs = axs.flatten()
 for i in range(plot_n_chans):
     trial_dat = []
@@ -75,6 +77,9 @@ for i in range(plot_n_chans):
             event_stop_time = ds.trial_info.iloc[event].start_time + pd.to_timedelta(post_offset_ms, unit="ms")    
             start_ix = ds.data.index.get_loc(event_start_time, method='nearest')
             stop_ix = ds.data.index.get_loc(event_stop_time, method='nearest')
+            if event == events[-1]:
+                print(start_ix, stop_ix)
+                print(event_start_time, event_stop_time)
             dat = ds.data.spikes.iloc[start_ix:stop_ix, chan_ix].values
             trial_dat.append(dat)
         ax = axs[i]

@@ -1,3 +1,4 @@
+# %%
 import sys
 import os
 import h5py
@@ -62,7 +63,7 @@ lfads_dataset_cfg = [
 
 
 # -- paths
-base_name = "binsize_2ms"
+base_name = "test_binsize_2ms"
 ds_base_dir = "/snel/share/share/derived/scpu_snel/NWB/"
 lfads_save_dir = f"/snel/share/share/derived/scpu_snel/nwb_lfads/runs/{base_name}/{expt_name}/datasets/"
 
@@ -103,8 +104,9 @@ chop_df = dataset.data
 
 # -- drop spk channels
 logger.info(f"Drop spike channels: {len(drop_spk_names)}/{chop_df.spikes.columns.values.size}")
-if type(np.any(drop_spk_names)) == int:
-    chop_df.drop(columns=drop_spk_names.tolist(), axis=1, level=1, inplace=True)
+
+if len(drop_spk_names) > 0:
+    chop_df.drop(columns=drop_spk_names, axis=1, level=1, inplace=True)
 
 # --- create save dirs if they do not exist
 pkl_dir = os.path.join(lfads_save_dir, "pkls")
@@ -148,6 +150,7 @@ interface = LFADSInterface(
 if TYPE == "emg":
     chan_keep_mask = emg_keep_mask.tolist()
     ds_name = "lfads_" + NAME + "_" + TYPE + "_" + str(BIN_SIZE) + ".h5"
+    ds_obj_name = "lfads_" + NAME + "_" + TYPE + "_" + str(BIN_SIZE) + "_fulldataset.pkl"
     yaml_name = "cfg_" + NAME + "_" + TYPE + "_" + str(BIN_SIZE) + ".yaml"
     INTERFACE_FILE = os.path.join(
         pkl_dir,
@@ -156,6 +159,9 @@ if TYPE == "emg":
 elif chop_cfg["TYPE"] == "spikes":    
     ds_name = (
         "lfads_" + NAME + "_" + ARRAY_SELECT + "_" + TYPE + "_" + str(BIN_SIZE) + ".h5"
+    )
+    ds_obj_name = (
+        "lfads_" + NAME + "_" + ARRAY_SELECT + "_" + TYPE + "_" + str(BIN_SIZE) + "_fulldataset.pkl"
     )
     yaml_name = (
         "cfg_" + NAME + "_" + ARRAY_SELECT + "_" + TYPE + "_" + str(BIN_SIZE) + ".yaml"
@@ -169,9 +175,15 @@ elif chop_cfg["TYPE"] == "spikes":
 
 DATA_FILE = os.path.join(lfads_save_dir, ds_name)
 YAML_FILE = os.path.join(lfads_save_dir, yaml_name)
+DATASET_OBJECT = os.path.join(lfads_save_dir, ds_obj_name)
 
 # --- chop and save h5 dataset
 interface.chop_and_save(chop_df, DATA_FILE, overwrite=True)
+
+# --- save original dataframe
+with open(DATASET_OBJECT,'wb') as outf:
+    logger.info(f"Original data file {DATASET_OBJECT} saved to pickle.")
+    pickle.dump(dataset, outf)
 
 # --- save yaml config file
 with open(YAML_FILE, "w") as yamlfile:
@@ -183,3 +195,5 @@ with open(YAML_FILE, "w") as yamlfile:
 with open(INTERFACE_FILE, "wb") as rfile:
     logger.info(f"Interface {INTERFACE_FILE} saved to pickle.")
     pickle.dump(interface, rfile)
+
+# %%
