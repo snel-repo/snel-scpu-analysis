@@ -1,0 +1,3 @@
+_target_: lfads_torch.datamodules.BasicDataModule
+datafile_pattern: ${relpath:datasets/lfads_NP_AAV6-2_ReaChR_184500_ALL_spikes_2.h5}
+batch_size: 256
