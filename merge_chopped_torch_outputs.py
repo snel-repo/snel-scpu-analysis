@@ -259,7 +259,7 @@ for i, chan in enumerate(chans):
     plt.plot()
 fig.tight_layout()
 
-# %% compute PCs of LFADS factors
+# %% prepare data to compute PCs
 
 # use pandas to replace all NaN values in lfads_factors with 0 inplace
 dataset.data.lfads_factors = dataset.data.lfads_factors.fillna(0)
@@ -268,16 +268,39 @@ dataset.data.lfads_factors = dataset.data.lfads_factors.fillna(0)
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 
-dataset.smooth_spk(signal_type='lfads_factors', gauss_width=15, name='smooth_15', overwrite=False)
+dataset.smooth_spk(signal_type='lfads_factors', gauss_width=8, name='smooth_15', overwrite=False)
 dataset.data.lfads_factors_smooth_15 = dataset.data.lfads_factors_smooth_15.fillna(0)
 scaler = StandardScaler()
 scaled_factors = scaler.fit_transform(dataset.data.lfads_factors_smooth_15)
+
+# %% SUBSET DATA
+BIN_WIDTH = 2 # ms
+# select 1s before and 10s after each trial
+trial_type = "locomotion"
+# trial_type = "stimulation"
+
+pre_offset_ms = 1000
+post_offset_ms = 10000
+stim_line_x = -1*(pre_offset_ms / BIN_WIDTH)
+time_vec = np.arange(pre_offset_ms, post_offset_ms, BIN_WIDTH)
+events = dataset.trial_info[dataset.trial_info.event_type == trial_type].trial_id.values
+
+scaled_factors_subset = []
+for event in events:        
+    event_start_time = dataset.trial_info.iloc[event].start_time + pd.to_timedelta(pre_offset_ms, unit="ms")    
+    event_stop_time = dataset.trial_info.iloc[event].start_time + pd.to_timedelta(post_offset_ms, unit="ms")    
+    start_ix = dataset.data.index.get_loc(event_start_time, method='nearest')
+    stop_ix = dataset.data.index.get_loc(event_stop_time, method='nearest')
+    subset_data = scaled_factors[start_ix:stop_ix, :]
+    scaled_factors_subset.append(subset_data)
+# %% compute PCs
 
 n_components = 3
 
 pca = PCA(n_components=n_components)
 
 scaled_factor_PCs = pca.fit_transform(scaled_factors)
+scaled_factors_subset_PCs = pca.transform(np.concatenate(scaled_factors_subset, axis=0))
 
 # %% smoothing LFADS rates
 dataset.smooth_spk(signal_type='lfads_rates', gauss_width=8, name='smooth_8', overwrite=False)
@@ -292,20 +315,20 @@ dataset.data.lfads_rates_smooth_8 = dataset.data.lfads_rates_smooth_8.fillna(0)
 
 
 # %%  visualize activation in channel 68 with threshold for "active" step cycles
-# channel 68 seems to correspond to overall cyclic firing in loco. trials
+
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 # create a 3D continuous plot of the first 3 PCs
-neuron = 65
-event_id = 18 # locomotion/stim trial idx
+neuron = 68 # 68 good for locomotion, 65 good for stim
+event_id = 4 # locomotion/stim trial idx
 # LOCOMOTION: 1, 2*, 4* good; 0, 3 okay | 
 # STIM: all but 19  | 18, 23, 24, 25/26/27 (periodic after) good examples
 BIN_WIDTH = 2 # ms
 
 
-win_len_ms = 700 # ms
+win_len_ms = 1500 # ms
 pre_buffer_ms = 200 # ms
 win_len = win_len_ms / BIN_WIDTH
 pre_buff = pre_buffer_ms / BIN_WIDTH
@@ -351,14 +374,16 @@ fr_mask = make_mask(mask_type, dataset.data.lfads_rates_smooth_8, \
 
 # %% create 3D plotly state space plots of scaled factor PCs 
 
+# PCs = scaled_factor_PCs
+PCs = scaled_factors_subset_PCs
 
 fig = go.Figure()
 
 fig.add_trace(
     go.Scatter3d(
-        x=scaled_factor_PCs[start_ix:stop_ix, 0], 
-        y=scaled_factor_PCs[start_ix:stop_ix, 1], 
-        z=scaled_factor_PCs[start_ix:stop_ix, 2],
+        x=PCs[start_ix:stop_ix, 0], 
+        y=PCs[start_ix:stop_ix, 1], 
+        z=PCs[start_ix:stop_ix, 2],
         mode='lines',
         line=dict(
             color=fr_mask,
