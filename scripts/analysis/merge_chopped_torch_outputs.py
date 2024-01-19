@@ -286,6 +286,7 @@ time_vec = np.arange(pre_offset_ms, post_offset_ms, BIN_WIDTH)
 events = dataset.trial_info[dataset.trial_info.event_type == trial_type].trial_id.values
 
 scaled_factors_subset = []
+start_stop_ix = []
 for event in events:        
     event_start_time = dataset.trial_info.iloc[event].start_time + pd.to_timedelta(pre_offset_ms, unit="ms")    
     event_stop_time = dataset.trial_info.iloc[event].start_time + pd.to_timedelta(post_offset_ms, unit="ms")    
@@ -293,6 +294,7 @@ for event in events:
     stop_ix = dataset.data.index.get_loc(event_stop_time, method='nearest')
     subset_data = scaled_factors[start_ix:stop_ix, :]
     scaled_factors_subset.append(subset_data)
+    start_stop_ix.append((start_ix, stop_ix))
 # %% compute PCs
 
 n_components = 3
@@ -301,6 +303,14 @@ pca = PCA(n_components=n_components)
 
 scaled_factor_PCs = pca.fit_transform(scaled_factors)
 scaled_factors_subset_PCs = pca.transform(np.concatenate(scaled_factors_subset, axis=0))
+
+# full time for dataset with Nans where we did not do PCA
+time_length = scaled_factors.shape[0]
+assert time_length == 1814001
+scaled_factors_subset_PCs_full_size = np.full((scaled_factors.shape[0], n_components), np.nan)
+
+for i, (start_ix, stop_ix) in enumerate(start_stop_ix):
+    scaled_factors_subset_PCs_full_size[start_ix:stop_ix, :] = scaled_factors_subset_PCs[i * (stop_ix - start_ix),:]
 
 # %% smoothing LFADS rates
 dataset.smooth_spk(signal_type='lfads_rates', gauss_width=8, name='smooth_8', overwrite=False)
