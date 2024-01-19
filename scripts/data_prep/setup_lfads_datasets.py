@@ -24,6 +24,7 @@ import logging
 import yaml
 import numpy as np
 import pandas as pd
+
 # %%
 # --- setup logger
 logger = logging.getLogger()
@@ -39,40 +40,10 @@ logger.addHandler(handler)
 expt_name = "NP_AAV6-2_ReaChR_184500"
 
 # === begin SCRIPT PARAMETERS ==========================
-
-lfads_dataset_cfg = [
-    {
-        "DATASET": {
-            "NAME": expt_name,
-            "CONDITION_SEP_FIELD": None,  # continuous
-            "ALIGN_LIMS": None,
-            "ARRAY_SELECT": "ALL",  # 'R', 'L', 'both'
-            "BIN_SIZE": 2, # 4,
-            "SPK_KEEP_THRESHOLD": None,  # 15,
-            "SPK_XCORR_THRESHOLD": 0.1,
-            "EXCLUDE_TRIALS": [],
-            "EXCLUDE_CONDITIONS": [],
-            "EXCLUDE_CHANNELS": [],
-        }
-    },
-    {
-        "CHOP_PARAMETERS": {
-            #"TYPE": "emg",
-            #"DATA_FIELDNAME": "model_emg",
-            "TYPE": "spikes",
-            "DATA_FIELDNAME": "spikes",
-            "USE_EXT_INPUT": False,
-            "EXT_INPUT_FIELDNAME": "",
-            "WINDOW": 200,  # ms
-            "OVERLAP": 50,  # ms
-            "MAX_OFFSET": 0,
-            "RANDOM_SEED": 0,
-            "CHOP_MARGINS": 0,
-        }
-    },
-]
-
-
+# load yaml config file
+yaml_config_path = "../configs/lfads_dataset_cfg.yaml"
+lfads_dataset_cfg = yaml.load(open(yaml_config_path), Loader=yaml.FullLoader)
+# %%
 # -- paths
 base_name = "test_binsize_2ms"
 ds_base_dir = "/snel/share/share/derived/scpu_snel/NWB/"
@@ -135,8 +106,8 @@ WIN_LEN = chop_cfg["WINDOW"]
 OLAP_LEN = chop_cfg["OVERLAP"]
 MAX_OFF = chop_cfg["MAX_OFFSET"]
 CHOP_MARG = chop_cfg["CHOP_MARGINS"]
-RAND_SEED = chop_cfg["RANDOM_SEED"]
 TYPE = chop_cfg["TYPE"]
+RAND_SEED = chop_cfg["RANDOM_SEED"]
 NAME = ld_cfg["NAME"]
 
 
@@ -158,34 +129,23 @@ interface = LFADSInterface(
     random_seed=RAND_SEED,
     chop_fields_map=chop_fields_map,
 )
-if TYPE == "emg":
-    chan_keep_mask = emg_keep_mask.tolist()
-    ds_name = "lfads_" + NAME + "_" + TYPE + "_" + str(BIN_SIZE) + ".h5"
-    ds_obj_name = "lfads_" + NAME + "_" + TYPE + "_" + str(BIN_SIZE) + "_fulldataset.pkl"
-    yaml_name = "cfg_" + NAME + "_" + TYPE + "_" + str(BIN_SIZE) + ".yaml"
-    INTERFACE_FILE = os.path.join(
-        pkl_dir,
-        NAME + "_" + TYPE + "_" + str(BIN_SIZE) + "_interface.pkl",
-    )
-elif chop_cfg["TYPE"] == "spikes":    
-    ds_name = (
-        "lfads_" + NAME + "_" + ARRAY_SELECT + "_" + TYPE + "_" + str(BIN_SIZE) + ".h5"
-    )
-    ds_obj_name = (
-        "lfads_" + NAME + "_" + ARRAY_SELECT + "_" + TYPE + "_" + str(BIN_SIZE) + "_fulldataset.pkl"
-    )
-    yaml_name = (
-        "cfg_" + NAME + "_" + ARRAY_SELECT + "_" + TYPE + "_" + str(BIN_SIZE) + ".yaml"
-    )
-    INTERFACE_FILE = os.path.join(
-        pkl_dir,
-        NAME + "_" + ARRAY_SELECT + "_" + TYPE + "_" + str(BIN_SIZE) + "_interface.pkl",
-    )
+
+  
+ds_name = (
+    "lfads_" + NAME + "_" + ARRAY_SELECT + "_" + TYPE + "_" + str(BIN_SIZE) + ".h5"
+)
+ds_obj_name = (
+    "lfads_" + NAME + "_" + ARRAY_SELECT + "_" + TYPE + "_" + str(BIN_SIZE) + "_fulldataset.pkl"
+)
+
+INTERFACE_FILE = os.path.join(
+    pkl_dir,
+    NAME + "_" + ARRAY_SELECT + "_" + TYPE + "_" + str(BIN_SIZE) + "_interface.pkl",
+)
 
 # save deemg input and dataset for each session
 
 DATA_FILE = os.path.join(lfads_save_dir, ds_name)
-YAML_FILE = os.path.join(lfads_save_dir, yaml_name)
 DATASET_OBJECT = os.path.join(lfads_save_dir, ds_obj_name)
 
 # --- chop and save h5 dataset
@@ -196,11 +156,7 @@ with open(DATASET_OBJECT,'wb') as outf:
     logger.info(f"Original data file {DATASET_OBJECT} saved to pickle.")
     pickle.dump(dataset, outf)
 
-# --- save yaml config file
-with open(YAML_FILE, "w") as yamlfile:
-    logger.info(f"YAML {YAML_FILE} saved to pickle.")
-    data1 = yaml.dump(lfads_dataset_cfg, yamlfile)
-    yamlfile.close()
+
 
 # --- save interface object
 with open(INTERFACE_FILE, "wb") as rfile:
