@@ -51,7 +51,7 @@ with open(interface_path,'rb') as inf:
 
 DEFAULT_MERGE_MAP = {
     "output_params": "lfads_rates",
-    # "factors": "lfads_factors",
+    "factors": "lfads_factors",
     # "gen_inputs": "lfads_gen_inputs",
 }
 
@@ -99,6 +99,7 @@ valid_inds = original_h5_data['valid_inds'][()]
 
 # %% Make full output df
     
+# get inferred rates from LFADS output
 n_batch = train_inds.size + valid_inds.size
 train_output = torch_outputs['train_output_params'][()]
 valid_output = torch_outputs['valid_output_params'][()]
@@ -106,8 +107,16 @@ full_output = np.empty((n_batch, train_output.shape[1], train_output.shape[2]))
 full_output[train_inds,:,:] = train_output
 full_output[valid_inds,:,:] = valid_output
 
+#get factors from LFADS output
+train_factors = torch_outputs['train_factors'][()]
+valid_factors = torch_outputs['valid_factors'][()]
+full_factors = np.empty((n_batch, train_factors.shape[1], train_factors.shape[2]))
+full_factors[train_inds,:,:] = train_factors
+full_factors[valid_inds,:,:] = valid_factors
+
 data_dict = {}
 data_dict['output_params'] = full_output
+data_dict['factors'] = full_factors
 
 merged_df = interface.merge(data_dict, smooth_pwr=1)
 
@@ -117,6 +126,12 @@ dataset.add_continuous_data(
     merged_df['lfads_rates'].values,
     "lfads_rates",
     chan_names=chan_names,
+)
+fac_names = np.arange(merged_df['lfads_factors'].shape[1])
+dataset.add_continuous_data(
+    merged_df['lfads_factors'].values,
+    "lfads_factors",
+    chan_names=fac_names,
 )
 # %% smooth spikes
 dataset.smooth_spk(gauss_width = 15, name='smooth_15', overwrite=False)
@@ -193,7 +208,7 @@ stim_line_x = -1*(pre_offset_ms / BIN_WIDTH)
 time_vec = np.arange(pre_offset_ms, post_offset_ms, BIN_WIDTH)
 events = dataset.trial_info[dataset.trial_info.event_type == "stimulation"].trial_id.values
 
-fig, axs = plt.subplots(2, len(chans), figsize=(10,3.5), dpi=150)
+fig, axs = plt.subplots(2, len(chans), figsize=(10,3.5), dpi=200)
 # Create a big subplot
 big_ax = fig.add_subplot(111, frameon=False)
 # Hide tick and tick label of the big subplot
@@ -244,53 +259,192 @@ for i, chan in enumerate(chans):
     plt.plot()
 fig.tight_layout()
 
-# %% SAME AS ABOVE BUT PLOTS MULTIPLE
+# %% compute PCs of LFADS factors
 
-start_chan_ix = 75
-plot_n_chans = 9
+# use pandas to replace all NaN values in lfads_factors with 0 inplace
+dataset.data.lfads_factors = dataset.data.lfads_factors.fillna(0)
 
-width = np.ceil(np.sqrt(plot_n_chans)).astype(int)
-height = np.floor(np.sqrt(plot_n_chans)).astype(int)
-pre_offset_ms = -100
-post_offset_ms = 200
-stim_line_x = -1*(pre_offset_ms / BIN_WIDTH)
-time_vec = np.arange(pre_offset_ms, post_offset_ms, BIN_WIDTH)
-events = dataset.trial_info[dataset.trial_info.event_type == "stimulation"].trial_id.values
-fig, axs = plt.subplots(width, height, figsize=(6,10), dpi=150)
-for i in range(plot_n_chans):
-    axs = axs.flatten()
-    trial_dat_spikes = []
-    trial_dat_lfads = []
-    chan_ix = start_chan_ix + i
-    if dataset.data.spikes.columns.isin([chan_ix]).any():
-        for event in events:        
-            event_start_time = dataset.trial_info.iloc[event].start_time + pd.to_timedelta(pre_offset_ms, unit="ms")    
-            event_stop_time = dataset.trial_info.iloc[event].start_time + pd.to_timedelta(post_offset_ms, unit="ms")    
-            start_ix = dataset.data.index.get_loc(event_start_time, method='nearest')
-            stop_ix = dataset.data.index.get_loc(event_stop_time, method='nearest')
-            dat_spikes = dataset.data.spikes.iloc[start_ix:stop_ix, chan_ix].values
-            trial_dat_spikes.append(dat_spikes)
 
-            dat_lfads = dataset.data.lfads_rates.iloc[start_ix:stop_ix, chan_ix].values
-            trial_dat_lfads.append(dat_lfads)
-        axs[0].pcolor(np.array(trial_dat_spikes), cmap=colormap.bone_r, vmin=0, vmax=2)    
-        axs[0].set_title(f"channel {chan_ix}", fontsize=8)
-        axs[0].vlines(stim_line_x, 0, len(trial_dat_lfads), color="r")
-        xticks = axs[0].get_xticks().astype(int)
-        xticks = xticks*BIN_WIDTH + pre_offset_ms
-        axs[0].set_xticklabels(xticks)
-        #ax.set_ylabel("trials")
-        #ax.set_xlabel("time (s)")
-        axs[0].spines['right'].set_visible(False)
-        axs[0].spines['top'].set_visible(False)
-        axs[1].pcolor(np.array(trial_dat_lfads), cmap=colormap.bone_r, vmin=0, vmax=2)    
-        axs[1].set_title(f"channel {chan_ix}", fontsize=8)
-        axs[1].vlines(stim_line_x, 0, len(trial_dat_lfads), color="r")
-        xticks = axs[1].get_xticks().astype(int)
-        xticks = xticks*BIN_WIDTH + pre_offset_ms
-        axs[1].set_xticklabels(xticks)
-        #ax.set_ylabel("trials")
-        #ax.set_xlabel("time (s)")
-        axs[1].spines['right'].set_visible(False)
-        axs[1].spines['top'].set_visible(False)
-fig.tight_layout()
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+
+dataset.smooth_spk(signal_type='lfads_factors', gauss_width=15, name='smooth_15', overwrite=False)
+dataset.data.lfads_factors_smooth_15 = dataset.data.lfads_factors_smooth_15.fillna(0)
+scaler = StandardScaler()
+scaled_factors = scaler.fit_transform(dataset.data.lfads_factors_smooth_15)
+
+n_components = 3
+
+pca = PCA(n_components=n_components)
+
+scaled_factor_PCs = pca.fit_transform(scaled_factors)
+
+# %% smoothing LFADS rates
+dataset.smooth_spk(signal_type='lfads_rates', gauss_width=8, name='smooth_8', overwrite=False)
+dataset.data.lfads_rates_smooth_8 = dataset.data.lfads_rates_smooth_8.fillna(0)
+# %% find which time points have factors with NaNs
+# time is dim 0 of the factors array
+
+# nan_mask = np.isnan(lfads_factors)
+# nan_mask = np.any(nan_mask, axis=1)
+# nan_ix = np.where(nan_mask)[0]
+# nan_time = dataset.data.index.values[nan_ix]
+
+
+# %%  visualize activation in channel 68 with threshold for "active" step cycles
+# channel 68 seems to correspond to overall cyclic firing in loco. trials
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+# create a 3D continuous plot of the first 3 PCs
+neuron = 65
+event_id = 18 # locomotion/stim trial idx
+# LOCOMOTION: 1, 2*, 4* good; 0, 3 okay | 
+# STIM: all but 19  | 18, 23, 24, 25/26/27 (periodic after) good examples
+BIN_WIDTH = 2 # ms
+
+
+win_len_ms = 700 # ms
+pre_buffer_ms = 200 # ms
+win_len = win_len_ms / BIN_WIDTH
+pre_buff = pre_buffer_ms / BIN_WIDTH
+event_start_time = dataset.trial_info.iloc[event_id].start_time - pd.to_timedelta(pre_buffer_ms, unit="ms")
+event_type = dataset.trial_info.iloc[event_id].event_type
+start_ix = dataset.data.index.get_loc(event_start_time, method='nearest')
+stop_ix = int(start_ix + win_len)
+
+print("ms range:",win_len_ms)
+
+fr_thresh = 0.03
+
+# plot 68 itself
+plt.title("channel {}".format)
+plt.plot(dataset.data.lfads_rates_smooth_8.iloc[start_ix:stop_ix,neuron])
+#add horizontal line at threshold
+plt.axhline(fr_thresh, color='r')
+plt.show()
+# make mask for points above threshold
+def make_mask(mask_type, data, thresh, start_ix, stop_ix):
+    if mask_type == 'binary':
+        mask = data.iloc[start_ix:stop_ix,neuron] > thresh
+        mask = np.array(mask).astype(int)
+    elif mask_type == 'segment_high':
+        mask = np.zeros((stop_ix-start_ix))
+        mask_diff=np.diff(np.insert(np.array(data.iloc[start_ix:stop_ix,neuron] > thresh).astype(int), 0,0),axis=0)
+        onsets = np.where(mask_diff == 1)[0]
+        offsets = np.where(mask_diff == -1)[0]
+        offsets = np.insert(offsets,offsets.shape[0],stop_ix-start_ix)
+        for i, (onset, offset) in enumerate(zip(onsets, offsets)):
+            mask[onset:offset] = i+1
+    return mask
+
+# mask_type = 'binary'
+mask_type= 'segment_high'
+fr_mask = make_mask(mask_type, dataset.data.lfads_rates_smooth_8, \
+                    fr_thresh, start_ix, stop_ix)
+#m
+# plot 68 diff
+# plt.title("channel 68 diff")
+# plt.plot(np.diff(dataset.data.lfads_rates_smooth_8.iloc[start_ix:stop_ix,68]))
+# plt.show()
+
+# %% create 3D plotly state space plots of scaled factor PCs 
+
+
+fig = go.Figure()
+
+fig.add_trace(
+    go.Scatter3d(
+        x=scaled_factor_PCs[start_ix:stop_ix, 0], 
+        y=scaled_factor_PCs[start_ix:stop_ix, 1], 
+        z=scaled_factor_PCs[start_ix:stop_ix, 2],
+        mode='lines',
+        line=dict(
+            color=fr_mask,
+            colorscale='oxy',
+            width=6
+        )
+    )
+)
+
+fig.update_layout(
+    scene=dict(
+        xaxis_title='PC1',
+        yaxis_title='PC2',
+        zaxis_title='PC3'
+    ),
+    title="LFADS factor PCs | Trial {} | {} ms".format(event_id, win_len_ms),
+)
+
+#fix aspect ratio
+fig.update_layout(scene_aspectmode='cube')
+
+fig.show()
+
+
+# %% make the same plot as above, but as a video that traces the path of the line
+# first, make a 3D scatter plot of the points
+fig = go.Figure()
+
+fig.add_trace(
+    go.Scatter3d(
+        x=scaled_factor_PCs[start_ix:stop_ix, 0], 
+        y=scaled_factor_PCs[start_ix:stop_ix, 1], 
+        z=scaled_factor_PCs[start_ix:stop_ix, 2],
+        mode='markers',
+        marker=dict(
+            color=fr_mask,
+            colorscale='oxy',
+            size=4
+        )
+    )
+)
+
+fig.update_layout(
+    scene=dict(
+        xaxis_title='PC1',
+        yaxis_title='PC2',
+        zaxis_title='PC3'
+    ),
+    title="LFADS factor PCs | Trial {} | {} ms".format(event_id, win_len_ms),
+)
+
+#fix aspect ratio
+fig.update_layout(scene_aspectmode='cube')
+
+# now, add a point that traces the path of the line
+
+
+fig.show()
+
+
+
+
+# %% 2D version of above
+fig = go.Figure()
+
+fig.add_trace(
+    go.Scatter(
+        x=scaled_factor_PCs[start_ix:stop_ix, 0], 
+        y=scaled_factor_PCs[start_ix:stop_ix, 1], 
+        mode='lines',
+        line=dict(
+            # color=np.arange(start_ix, stop_ix),
+            # colorscale='viridis',
+            width=2
+        )
+    )
+)
+
+fig.update_layout(
+    xaxis_title='PC1',
+    yaxis_title='PC2',
+    title="LFADS factor PCs"
+)
+
+fig.show()
+
+
+
+# %% 
