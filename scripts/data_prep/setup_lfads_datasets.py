@@ -1,3 +1,14 @@
+'''
+PURPOSE: Chops continuous NWB data into overlapping windows for LFADS input
+
+Script resamples data, drops channels, and saves chopped data as h5 file
+
+OUTPUT: 
+1. Resampled SNEL Toolkit Dataset object saved as pickle
+2. LFADS config file saved as yaml
+3. SNEL Toolkit LFADSInterface object saved as pickle
+'''
+###
 # %%
 import sys
 import os
