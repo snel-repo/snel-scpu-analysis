@@ -9,6 +9,8 @@ import matplotlib.cm as colormap
 from snel_toolkit.datasets.nwb import NWBDataset
 import logging
 import sys
+import yaml
+from analysis_utils import get_train_valid_inds, combine_train_valid_outputs
 
 # %%
 logger = logging.getLogger()
@@ -20,28 +22,37 @@ formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(messag
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
+# load YAML file
+yaml_config_path = "../configs/lfads_dataset_cfg.yaml"
+lfads_dataset_cfg = yaml.load(open(yaml_config_path), Loader=yaml.FullLoader)
+
+path_config = lfads_dataset_cfg["PATH_CONFIG"]
+ld_cfg = lfads_dataset_cfg["DATASET"]
+merge_config = lfads_dataset_cfg["MERGE_PARAMETERS"]
+
+
 # system inputs
-run_date = '240112' # 240108 first run, 240112 second run
-expt_name = "NP_AAV6-2_ReaChR_184500"
-initials = "cw"
-run_type = "spikes" # "spikes" or "emg"
-run_name_modifier = "ALL"
-samp_rate = 2
+run_date = path_config["RUN_DATE"] # 240108 first run, 240112 second run
+expt_name = ld_cfg["NAME"] # Ex: "NP_AAV6-2_ReaChR_184500"
+initials = path_config["INITIALS"] # Ex: "cw"
+run_type = path_config["TYPE"] # Ex: "spikes"
+chan_select = ld_cfg["ARRAY_SELECT"] # Ex: "ALL"
+bin_size = ld_cfg["BIN_SIZE"] # Ex: 2
 
 # create paths
-ds_name = f"{expt_name}_{run_name_modifier}_{run_type}_{str(samp_rate)}"
-base_name = "binsize_2ms"
+ds_name = f"{expt_name}_{chan_select}_{run_type}_{str(bin_size)}"
+base_name = f"binsize_{ld_cfg['BIN_SIZE']}"
 run_base_dir = f"/snel/share/runs/aav_{run_type}/lfads_{ds_name}/{run_date}_aav_{run_type}_PBT_{initials}"
 run_dir = os.path.join(run_base_dir,"best_model")
-lfads_torch_outputs = os.path.join(run_dir,f"lfads_output_lfads_{ds_name}_out.h5")
+lfads_torch_outputs_path = os.path.join(run_dir,f"lfads_output_lfads_{ds_name}_out.h5")
 lfads_save_dir = f"/snel/share/share/derived/scpu_snel/nwb_lfads/runs/{base_name}/{expt_name}/datasets/"
 unchopped_ds_path = os.path.join(lfads_save_dir,"lfads_"+ds_name+"_unchopped.pkl")
 interface_path = f"{lfads_save_dir}pkls/{ds_name}_interface.pkl"
 DATA_FILE = os.path.join(lfads_save_dir, ds_name)
 
-cache_dataset = "/snel/share/share/derived/scpu_snel/nwb_lfads/runs/binsize_2ms/NP_AAV6-2_ReaChR_184500/datasets/lfads_NP_AAV6-2_ReaChR_184500_ALL_spikes_2_fulldataset.pkl"
+cache_dataset = f"/snel/share/share/derived/scpu_snel/nwb_lfads/runs/{base_name}/{expt_name}/datasets/lfads_{expt_name}_{chan_select}_{run_type}_{bin_size}_fulldataset.pkl"
 
-original_h5 = "/snel/share/share/derived/scpu_snel/nwb_lfads/runs/binsize_2ms/NP_AAV6-2_ReaChR_184500/datasets/lfads_NP_AAV6-2_ReaChR_184500_ALL_spikes_2.h5"
+original_h5 = f"/snel/share/share/derived/scpu_snel/nwb_lfads/runs/{base_name}/{expt_name}/datasets/lfads_{expt_name}_{chan_select}_{run_type}_{bin_size}.h5"
 
 
 # %% LOAD CONTINUOUS DATA DF, MERGE WITH TORCH OUTPUTS  
@@ -49,75 +60,27 @@ with open(interface_path,'rb') as inf:
     interface = pkl.load(inf)
 
 
-DEFAULT_MERGE_MAP = {
-    "output_params": "lfads_rates",
-    "factors": "lfads_factors",
-    # "gen_inputs": "lfads_gen_inputs",
-}
 
-interface.merge_fields_map = DEFAULT_MERGE_MAP
+interface.merge_fields_map = merge_config
 
 with open(cache_dataset,'rb') as inf:
     dataset = pkl.load(inf)
 
-torch_outputs = h5py.File(lfads_torch_outputs)
+torch_outputs = h5py.File(lfads_torch_outputs_path)
 
-# %% 
-def print_spikes(dataset_us):
+# %%
 
-    base_dir = "/snel/share/share/derived/scpu_snel/NWB/"
-    ds_name = "NP_AAV6-2_ReaChR_184500_kilosort.nwb"
-
-    ds_path = os.path.join(base_dir, ds_name)
-    logger.info(f"Loading {ds_name} from NWB")
-    ds = NWBDataset(ds_path, split_heldout=False)
-    BIN_WIDTH = 2 # ms
-    ds.resample(BIN_WIDTH)
-
-    print(np.array_equal(dataset_us.data.spikes.values, ds.data.spikes.values))
-    print("our dataset shape", dataset_us.data.spikes.values.shape)
-    print("nwb dataset shape", ds.data.spikes.values.shape)
-
-    # print number of indices that differ between the datasets
-    print(np.sum(np.abs(dataset_us.data.spikes.values - ds.data.spikes.values)))
-
-    # print which columns have differences
-    print(np.where(np.abs(dataset_us.data.spikes.values - ds.data.spikes.values) > 0))
-
-# print_spikes(dataset)
-
-# %% 
-original_h5_data = h5py.File(original_h5)
-train_inds = original_h5_data['train_inds'][()]
-valid_inds = original_h5_data['valid_inds'][()]
-
-# %% RUN ONCE
-# with h5py.File(lfads_torch_outputs,'a') as torch_output_data:
-#     torch_output_data.create_dataset('train_inds',data=train_inds)
-#     torch_output_data.create_dataset('valid_inds',data=valid_inds)
+train_inds, valid_inds = get_train_valid_inds(original_h5, torch_outputs, lfads_torch_outputs_path)
 
 
 # %% Make full output df
     
 # get inferred rates from LFADS output
-n_batch = train_inds.size + valid_inds.size
-train_output = torch_outputs['train_output_params'][()]
-valid_output = torch_outputs['valid_output_params'][()]
-full_output = np.empty((n_batch, train_output.shape[1], train_output.shape[2]))
-full_output[train_inds,:,:] = train_output
-full_output[valid_inds,:,:] = valid_output
 
-#get factors from LFADS output
-train_factors = torch_outputs['train_factors'][()]
-valid_factors = torch_outputs['valid_factors'][()]
-full_factors = np.empty((n_batch, train_factors.shape[1], train_factors.shape[2]))
-full_factors[train_inds,:,:] = train_factors
-full_factors[valid_inds,:,:] = valid_factors
 
-data_dict = {}
-data_dict['output_params'] = full_output
-data_dict['factors'] = full_factors
 
+
+data_dict = combine_train_valid_outputs(torch_outputs, train_inds, valid_inds, merge_config)
 merged_df = interface.merge(data_dict, smooth_pwr=1)
 
 # %% Merge with original dataset
@@ -140,13 +103,12 @@ dataset.smooth_spk(gauss_width = 15, name='smooth_15', overwrite=False)
 event_id = 25 # locomotion/stim trial idx
 # LOCOMOTION: 1, 2*, 4* good; 0, 3 okay | 
 # STIM: all but 19  | 18, 23, 24, 25/26/27 (periodic after) good examples
-BIN_WIDTH = 2 # ms
 
 
 win_len_ms = 4000 # ms
 pre_buffer_ms = 500 # ms
-win_len = win_len_ms / BIN_WIDTH
-pre_buff = pre_buffer_ms / BIN_WIDTH
+win_len = win_len_ms / bin_size
+pre_buff = pre_buffer_ms / bin_size
 event_start_time = dataset.trial_info.iloc[event_id].start_time - pd.to_timedelta(pre_buffer_ms, unit="ms")
 event_type = dataset.trial_info.iloc[event_id].event_type
 start_ix = dataset.data.index.get_loc(event_start_time, method='nearest')
@@ -204,8 +166,8 @@ chans = [34, 68, 85, 47, 79]
 
 pre_offset_ms = -100
 post_offset_ms = 200
-stim_line_x = -1*(pre_offset_ms / BIN_WIDTH)
-time_vec = np.arange(pre_offset_ms, post_offset_ms, BIN_WIDTH)
+stim_line_x = -1*(pre_offset_ms / bin_size)
+time_vec = np.arange(pre_offset_ms, post_offset_ms, bin_size)
 events = dataset.trial_info[dataset.trial_info.event_type == "stimulation"].trial_id.values
 
 fig, axs = plt.subplots(2, len(chans), figsize=(10,3.5), dpi=200)
@@ -240,7 +202,7 @@ for i, chan in enumerate(chans):
         axs[i].set_title(f"channel {chan}", fontsize=8)
         axs[i].vlines(stim_line_x, 0, len(trial_dat_lfads), color="r")
         xticks = axs[i].get_xticks().astype(int)
-        xticks = xticks*BIN_WIDTH + pre_offset_ms
+        xticks = xticks*bin_size + pre_offset_ms
         axs[i].set_xticklabels(xticks)
         #ax.set_ylabel("trials")
         #ax.set_xlabel("time (s)")
@@ -250,7 +212,7 @@ for i, chan in enumerate(chans):
         axs[i+len(chans)].set_title(f"channel {chan}", fontsize=8)
         axs[i+len(chans)].vlines(stim_line_x, 0, len(trial_dat_lfads), color="r")
         xticks = axs[i+len(chans)].get_xticks().astype(int)
-        xticks = xticks*BIN_WIDTH + pre_offset_ms
+        xticks = xticks*bin_size + pre_offset_ms
         axs[i+len(chans)].set_xticklabels(xticks)
         #ax.set_ylabel("trials")
         #ax.set_xlabel("time (s)")
@@ -274,15 +236,14 @@ scaler = StandardScaler()
 scaled_factors = scaler.fit_transform(dataset.data.lfads_factors_smooth_15)
 
 # %% SUBSET DATA
-BIN_WIDTH = 2 # ms
 # select 1s before and 10s after each trial
 trial_type = "locomotion"
 # trial_type = "stimulation"
 
 pre_offset_ms = 1000
 post_offset_ms = 10000
-stim_line_x = -1*(pre_offset_ms / BIN_WIDTH)
-time_vec = np.arange(pre_offset_ms, post_offset_ms, BIN_WIDTH)
+stim_line_x = -1*(pre_offset_ms / bin_size)
+time_vec = np.arange(pre_offset_ms, post_offset_ms, bin_size)
 events = dataset.trial_info[dataset.trial_info.event_type == trial_type].trial_id.values
 
 scaled_factors_subset = []
@@ -335,13 +296,12 @@ neuron = 68 # 68 good for locomotion, 65 good for stim
 event_id = 4 # locomotion/stim trial idx
 # LOCOMOTION: 1, 2*, 4* good; 0, 3 okay | 
 # STIM: all but 19  | 18, 23, 24, 25/26/27 (periodic after) good examples
-BIN_WIDTH = 2 # ms
 
 
 win_len_ms = 1500 # ms
 pre_buffer_ms = 200 # ms
-win_len = win_len_ms / BIN_WIDTH
-pre_buff = pre_buffer_ms / BIN_WIDTH
+win_len = win_len_ms / bin_size
+pre_buff = pre_buffer_ms / bin_size
 event_start_time = dataset.trial_info.iloc[event_id].start_time - pd.to_timedelta(pre_buffer_ms, unit="ms")
 event_type = dataset.trial_info.iloc[event_id].event_type
 start_ix = dataset.data.index.get_loc(event_start_time, method='nearest')

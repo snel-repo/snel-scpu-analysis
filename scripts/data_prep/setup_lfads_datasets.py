@@ -36,16 +36,19 @@ formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(messag
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
-# --- handle system inputs
-expt_name = "NP_AAV6-2_ReaChR_184500"
-
 # === begin SCRIPT PARAMETERS ==========================
 # load yaml config file
 yaml_config_path = "../configs/lfads_dataset_cfg.yaml"
 lfads_dataset_cfg = yaml.load(open(yaml_config_path), Loader=yaml.FullLoader)
+path_config = lfads_dataset_cfg["PATH_CONFIG"]
+ld_cfg = lfads_dataset_cfg["DATASET"]
+chop_cfg = lfads_dataset_cfg["CHOP_PARAMETERS"]
+
+expt_name = ld_cfg["NAME"]
+
 # %%
 # -- paths
-base_name = "test_binsize_2ms"
+base_name = f"binsize_{ld_cfg['BIN_SIZE']}"
 ds_base_dir = "/snel/share/share/derived/scpu_snel/NWB/"
 lfads_save_dir = f"/snel/share/share/derived/scpu_snel/nwb_lfads/runs/{base_name}/{expt_name}/datasets/"
 
@@ -60,7 +63,6 @@ dataset = NWBDataset(ds_path, split_heldout=False)
 # --- preprocess spiking data
 
 
-ld_cfg = lfads_dataset_cfg[0]["DATASET"]
 
 # --- drop spk channnels (if necessary)
 
@@ -99,15 +101,13 @@ if os.path.exists(pkl_dir) is not True:
 
 # --- initialize chop interface
 
-chop_cfg = lfads_dataset_cfg[1]["CHOP_PARAMETERS"]
-
 # -- extract relevant config params
 WIN_LEN = chop_cfg["WINDOW"]
 OLAP_LEN = chop_cfg["OVERLAP"]
 MAX_OFF = chop_cfg["MAX_OFFSET"]
 CHOP_MARG = chop_cfg["CHOP_MARGINS"]
-TYPE = chop_cfg["TYPE"]
 RAND_SEED = chop_cfg["RANDOM_SEED"]
+TYPE = path_config["TYPE"]
 NAME = ld_cfg["NAME"]
 
 
