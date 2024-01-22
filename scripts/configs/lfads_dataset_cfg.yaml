@@ -22,7 +22,7 @@ CHOP_PARAMETERS:
   WINDOW: 200
 
 PATH_CONFIG:
-  INITALS: "cw"
+  INITIALS: "cw"
   RUN_DATE: "240112"
   TYPE: "spikes"
 

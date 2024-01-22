@@ -1,5 +1,7 @@
 import h5py
 import typing 
+import numpy as np
+
 def get_train_valid_inds(original_h5, torch_outputs, lfads_torch_outputs_path):
     original_h5_data = h5py.File(original_h5)
     train_inds = original_h5_data['train_inds'][()]

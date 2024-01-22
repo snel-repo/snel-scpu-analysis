@@ -89,8 +89,8 @@ chop_df = dataset.data
 # -- drop spk channels
 logger.info(f"Drop spike channels: {len(drop_spk_names)}/{chop_df.spikes.columns.values.size}")
 
-if len(drop_spk_names) > 0:
-    chop_df.drop(columns=drop_spk_names, axis=1, level=1, inplace=True)
+# if len(drop_spk_names) > 0:
+#     chop_df.drop(columns=drop_spk_names, axis=1, level=1, inplace=True)
 
 # --- create save dirs if they do not exist
 pkl_dir = os.path.join(lfads_save_dir, "pkls")
