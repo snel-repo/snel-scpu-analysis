@@ -10,7 +10,8 @@ from snel_toolkit.datasets.nwb import NWBDataset
 import logging
 import sys
 import yaml
-from analysis_utils import get_train_valid_inds, combine_train_valid_outputs
+import dill
+from analysis_utils import *
 
 # %%
 logger = logging.getLogger()
@@ -76,20 +77,22 @@ data_dict = combine_train_valid_outputs(torch_outputs, train_inds, valid_inds, m
 merged_df = interface.merge(data_dict, smooth_pwr=1)
 
 # %% Merge with original dataset
-chan_names=dataset.data['spikes'].columns.values
-dataset.add_continuous_data(
-    merged_df['lfads_rates'].values,
-    "lfads_rates",
-    chan_names=chan_names,
-)
-fac_names = np.arange(merged_df['lfads_factors'].shape[1])
-dataset.add_continuous_data(
-    merged_df['lfads_factors'].values,
-    "lfads_factors",
-    chan_names=fac_names,
-)
-# %% smooth spikes
+merge_with_original_df(merged_df, dataset)
+# %% smooth spikes, rates, factors
+# fill na with 0 for lfads outputs due to chopping
 dataset.smooth_spk(gauss_width = 15, name='smooth_15', overwrite=False)
+
+dataset.smooth_spk(signal_type='lfads_rates', gauss_width=8, name='smooth_8', overwrite=False)
+dataset.data.lfads_rates_smooth_8 = dataset.data.lfads_rates_smooth_8.fillna(0)
+
+dataset.smooth_spk(signal_type='lfads_factors', gauss_width=8, name='smooth_15', overwrite=False)
+dataset.data.lfads_factors_smooth_15 = dataset.data.lfads_factors_smooth_15.fillna(0)
+
+# %%
+# save dataset to pickle
+merged_full_output = os.path.join(run_dir, f"lfads_{expt_name}_{chan_select}_{run_type}_{bin_size}_full_merged_output.pkl")
+with open(merged_full_output, "wb") as f:
+    dill.dump(dataset, f, protocol=dill.HIGHEST_PROTOCOL, recurse=True)
 
 # %% all channels raster for single trial
 event_id = 25 # locomotion/stim trial idx
@@ -97,14 +100,13 @@ event_id = 25 # locomotion/stim trial idx
 # STIM: all but 19  | 18, 23, 24, 25/26/27 (periodic after) good examples
 
 
-win_len_ms = 4000 # ms
-pre_buffer_ms = 500 # ms
-win_len = win_len_ms / bin_size
+
+pre_buffer_ms = 200 # ms
+win_len_ms = 1100 # ms
 pre_buff = pre_buffer_ms / bin_size
-event_start_time = dataset.trial_info.iloc[event_id].start_time - pd.to_timedelta(pre_buffer_ms, unit="ms")
+
+start_ix, stop_ix = get_event_start_stop_ix(win_len_ms=win_len_ms, pre_buffer_ms=pre_buffer_ms, event_id=event_id, dataset=dataset)
 event_type = dataset.trial_info.iloc[event_id].event_type
-start_ix = dataset.data.index.get_loc(event_start_time, method='nearest')
-stop_ix = int(start_ix + win_len)
 # make a 2 by 1 subplot
 fig,axs = plt.subplots(3,1,figsize=(8,11),dpi=100)
 plt.subplots_adjust(top=0.88)
@@ -114,39 +116,60 @@ plt.subplots_adjust(top=0.88)
 smooth_slice = dataset.data.spikes_smooth_15.values[start_ix:stop_ix,:]
 lfads_slice = dataset.data.lfads_rates.values[start_ix:stop_ix,:]
 spikes_slice = dataset.data.spikes.values[start_ix:stop_ix,:]
-vmin = 0 # min([smooth_slice.min(), lfads_slice.min()])
+vmin = 0 
 vmax = max([smooth_slice.max(), lfads_slice.max()])
 max_scale = 0.5
 time_vec = dataset.data.index.values[start_ix:stop_ix+1].astype("timedelta64[ms]").astype(float)/1000.0
 
-fig.suptitle(f"{event_type} trial {event_id}", x=0.1,y=1)
-axs[0].pcolor(smooth_slice.T, cmap='viridis', vmin=vmin, vmax=max_scale*vmax)
-axs[1].pcolor(lfads_slice.T, cmap='viridis', vmin=vmin, vmax=max_scale*vmax)
-axs[2].pcolor(spikes_slice.T, cmap=colormap.bone_r, vmin=0, vmax=1)
+# fig.suptitle(f"{event_type} trial {event_id}", x=0.1,y=1)
+# axs[0].pcolor(smooth_slice.T, cmap='viridis', vmin=vmin, vmax=max_scale*vmax)
+# axs[1].pcolor(lfads_slice.T, cmap='viridis', vmin=vmin, vmax=max_scale*vmax)
+# axs[2].pcolor(spikes_slice.T, cmap=colormap.bone_r, vmin=0, vmax=1)
 
-axs[0].set_title("smoothed spikes")
-axs[0].vlines(pre_buff, 0, dataset.data.spikes.shape[1], color="r")
-axs[0].set_xticklabels(time_vec[axs[0].get_xticks().astype(int)])
-axs[0].set_ylabel("neurons")
-axs[0].set_xlabel("time (s)")
-axs[0].spines['right'].set_visible(False)
-axs[0].spines['top'].set_visible(False)
+# axs[0].set_title("smoothed spikes")
+# axs[0].vlines(pre_buff, 0, dataset.data.spikes.shape[1], color="r")
+# axs[0].set_xticklabels(time_vec[axs[0].get_xticks().astype(int)])
+# axs[0].set_ylabel("neurons")
+# axs[0].set_xlabel("time (s)")
+# axs[0].spines['right'].set_visible(False)
+# axs[0].spines['top'].set_visible(False)
 
-axs[1].set_title("LFADS inferred rates")
-axs[1].vlines(pre_buff, 0, dataset.data.spikes.shape[1], color="r")
-axs[1].set_xticklabels(time_vec[axs[1].get_xticks().astype(int)])
-axs[1].set_ylabel("neurons")
-axs[1].set_xlabel("time (s)")
-axs[1].spines['right'].set_visible(False)
-axs[1].spines['top'].set_visible(False)
+# axs[1].set_title("LFADS inferred rates")
+# axs[1].vlines(pre_buff, 0, dataset.data.spikes.shape[1], color="r")
+# axs[1].set_xticklabels(time_vec[axs[1].get_xticks().astype(int)])
+# axs[1].set_ylabel("neurons")
+# axs[1].set_xlabel("time (s)")
+# axs[1].spines['right'].set_visible(False)
+# axs[1].spines['top'].set_visible(False)
 
-axs[2].set_title("original spikes")
-axs[2].vlines(pre_buff, 0, dataset.data.spikes.shape[1], color="r")
-axs[2].set_xticklabels(time_vec[axs[2].get_xticks().astype(int)])
-axs[2].set_ylabel("neurons")
-axs[2].set_xlabel("time (s)")
-axs[2].spines['right'].set_visible(False)
-axs[2].spines['top'].set_visible(False)
+# axs[2].set_title("original spikes")
+# axs[2].vlines(pre_buff, 0, dataset.data.spikes.shape[1], color="r")
+# axs[2].set_xticklabels(time_vec[axs[2].get_xticks().astype(int)])
+# axs[2].set_ylabel("neurons")
+# axs[2].set_xlabel("time (s)")
+# axs[2].spines['right'].set_visible(False)
+# axs[2].spines['top'].set_visible(False)
+
+# plt.subplots_adjust(hspace=0.5)
+# fig.tight_layout()
+# plt.show()
+
+titles = ["smoothed spikes", "LFADS inferred rates", "original spikes"]
+data_slices = [smooth_slice, lfads_slice, spikes_slice]
+cmaps = ['viridis', 'viridis', colormap.bone_r]
+vmaxs = [max_scale*vmax, max_scale*vmax, 1]
+vmin = 0
+fig.suptitle(f"{event_type} trial {event_id}", x=0.1, y=1)
+
+for i in range(3):
+    axs[i].pcolor(data_slices[i].T, cmap=cmaps[i], vmin=vmin, vmax=vmaxs[i])
+    axs[i].set_title(titles[i])
+    axs[i].vlines(pre_buff, 0, dataset.data.spikes.shape[1], color="r")
+    axs[i].set_xticklabels(time_vec[axs[i].get_xticks().astype(int)])
+    axs[i].set_ylabel("neurons")
+    axs[i].set_xlabel("time (s)")
+    axs[i].spines['right'].set_visible(False)
+    axs[i].spines['top'].set_visible(False)
 
 plt.subplots_adjust(hspace=0.5)
 fig.tight_layout()
@@ -222,8 +245,7 @@ dataset.data.lfads_factors = dataset.data.lfads_factors.fillna(0)
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 
-dataset.smooth_spk(signal_type='lfads_factors', gauss_width=8, name='smooth_15', overwrite=False)
-dataset.data.lfads_factors_smooth_15 = dataset.data.lfads_factors_smooth_15.fillna(0)
+
 scaler = StandardScaler()
 scaled_factors = scaler.fit_transform(dataset.data.lfads_factors_smooth_15)
 
@@ -298,9 +320,7 @@ scaled_factors_subset_PCs_full_size = np.full((scaled_factors.shape[0], n_compon
 for i, (start_ix, stop_ix) in enumerate(start_stop_ix):
     scaled_factors_subset_PCs_full_size[start_ix:stop_ix, :] = scaled_factors_subset_PCs[i * (stop_ix - start_ix): (i + 1) * (stop_ix - start_ix),:]
 
-# %% smoothing LFADS rates
-dataset.smooth_spk(signal_type='lfads_rates', gauss_width=8, name='smooth_8', overwrite=False)
-dataset.data.lfads_rates_smooth_8 = dataset.data.lfads_rates_smooth_8.fillna(0)
+
 # %% find which time points have factors with NaNs
 # time is dim 0 of the factors array
 
