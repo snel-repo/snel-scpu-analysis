@@ -37,6 +37,9 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 
 # === begin SCRIPT PARAMETERS ==========================
+
+ADD_KINEMATICS_TO_DF = True
+
 # load yaml config file
 yaml_config_path = "../configs/lfads_dataset_cfg.yaml"
 lfads_dataset_cfg = yaml.load(open(yaml_config_path), Loader=yaml.FullLoader)
@@ -45,6 +48,7 @@ ld_cfg = lfads_dataset_cfg["DATASET"]
 chop_cfg = lfads_dataset_cfg["CHOP_PARAMETERS"]
 
 expt_name = ld_cfg["NAME"]
+kin_name = ld_cfg["KINEMATICS_NAME"]
 
 # %%
 # -- paths
@@ -56,9 +60,13 @@ lfads_save_dir = f"/snel/share/share/derived/scpu_snel/nwb_lfads/runs/{base_name
 
 
 ds_path = os.path.join(ds_base_dir, expt_name + ".nwb")
+ds_path_kin = os.path.join(ds_base_dir, kin_name + ".nwb")
 # --- load dataset from NWB
 logger.info(f"Loading {expt_name} from NWB")
 dataset = NWBDataset(ds_path, split_heldout=False)
+if ADD_KINEMATICS_TO_DF:
+    dataset_kin = NWBDataset(ds_path_kin, split_heldout=False)
+    dataset.data["kin_pos"] = dataset_kin.data["kin_pos"]
 
 # --- preprocess spiking data
 
@@ -130,12 +138,13 @@ interface = LFADSInterface(
     chop_fields_map=chop_fields_map,
 )
 
+DS_NAME_MOD= "_with_kin" if ADD_KINEMATICS_TO_DF else ""
   
 ds_name = (
     "lfads_" + NAME + "_" + ARRAY_SELECT + "_" + TYPE + "_" + str(BIN_SIZE) + ".h5"
 )
 ds_obj_name = (
-    "lfads_" + NAME + "_" + ARRAY_SELECT + "_" + TYPE + "_" + str(BIN_SIZE) + "_fulldataset.pkl"
+    "lfads_" + NAME + "_" + ARRAY_SELECT + "_" + TYPE + "_" + str(BIN_SIZE) + "_fulldataset" + DS_NAME_MOD + ".pkl"
 )
 
 INTERFACE_FILE = os.path.join(
@@ -146,7 +155,7 @@ INTERFACE_FILE = os.path.join(
 # save deemg input and dataset for each session
 
 DATA_FILE = os.path.join(lfads_save_dir, ds_name)
-DATASET_OBJECT = os.path.join(lfads_save_dir, ds_obj_name)
+DATASET_OBJECT = os.path.join(lfads_save_dir, 'pkls', ds_obj_name)
 
 # --- chop and save h5 dataset
 interface.chop_and_save(chop_df, DATA_FILE, overwrite=True)
