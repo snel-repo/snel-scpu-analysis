@@ -1,3 +1,10 @@
+"""
+PURPOSE: 1.) Plot rasters of smoothed spikes, lfads inferred rates, and original spikes for a single trial
+         2.) Plot rasters of smoothed spikes and lfads inferred rates for all stimulation trials for a single channel
+
+REQUIREMENTS: merged pkl file from merge_chopped_torch_outputs.py
+"""
+
 # %% INPUTS AND PATHS
 import os
 import pickle as pkl
@@ -13,12 +20,36 @@ import yaml
 import dill
 from analysis_utils import *
 
+# %% load YAML file and attributes
+
+yaml_config_path = "../configs/lfads_dataset_cfg.yaml"
+
+path_config, ld_cfg, merge_config = load_cfgs(yaml_config_path)
+
+# system inputs
+run_date = path_config["RUN_DATE"] # 240108 first run, 240112 second run
+expt_name = ld_cfg["NAME"] # Ex: "NP_AAV6-2_ReaChR_184500"
+initials = path_config["INITIALS"] # Ex: "cw"
+run_type = path_config["TYPE"] # Ex: "spikes"
+chan_select = ld_cfg["ARRAY_SELECT"] # Ex: "ALL"
+bin_size = ld_cfg["BIN_SIZE"] # Ex: 2
+
+
+# %% load dataset
+
+ds_name = f"{expt_name}_{chan_select}_{run_type}_{str(bin_size)}"
+base_name = f"binsize_{ld_cfg['BIN_SIZE']}"
+run_base_dir = f"/snel/share/runs/aav_{run_type}/lfads_{ds_name}/{run_date}_aav_{run_type}_PBT_{initials}"
+run_dir = os.path.join(run_base_dir,"best_model")
+
+merged_full_output = os.path.join(run_dir, f"lfads_{expt_name}_{chan_select}_{run_type}_{bin_size}_full_merged_output.pkl")
+with open(merged_full_output, "rb") as f:
+    dataset = dill.load(f)
+
 # %% all channels raster for single trial
 event_id = 25 # locomotion/stim trial idx
 # LOCOMOTION: 1, 2*, 4* good; 0, 3 okay | 
 # STIM: all but 19  | 18, 23, 24, 25/26/27 (periodic after) good examples
-
-
 
 pre_buffer_ms = 500 # ms
 win_len_ms = 4000 # ms
@@ -126,3 +157,5 @@ for i, chan in enumerate(chans):
     plt.plot()
 fig.tight_layout()
 
+
+# %%

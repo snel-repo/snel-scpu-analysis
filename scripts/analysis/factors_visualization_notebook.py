@@ -1,3 +1,9 @@
+"""
+PURPOSE: Fit PCs on the latent factors and plot the PCs in 3D space, coloring by step cycles
+
+REQUIREMENTS: merged pkl file from merge_chopped_torch_outputs.py
+"""
+
 # %% INPUTS AND PATHS
 import os
 import pickle as pkl
@@ -13,15 +19,23 @@ import yaml
 import dill
 from analysis_utils import *
 
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+# %% load dataset and bin size
+
+yaml_config_path = "../configs/lfads_dataset_cfg.yaml"
+
+dataset, bin_size = load_dataset_and_binsize(yaml_config_path)
+
 # %% prepare data to compute PCs
 
 # use pandas to replace all NaN values in lfads_factors with 0 inplace
 dataset.data.lfads_factors = dataset.data.lfads_factors.fillna(0)
-
-
-from sklearn.decomposition import PCA
-from sklearn.preprocessing import StandardScaler
-
 
 scaler = StandardScaler()
 scaled_factors = scaler.fit_transform(dataset.data.lfads_factors_smooth_15)
@@ -100,20 +114,7 @@ for i, (start_ix, stop_ix) in enumerate(start_stop_ix):
     scaled_factors_subset_PCs_full_size[start_ix:stop_ix, :] = scaled_factors_subset_PCs[i * (stop_ix - start_ix): (i + 1) * (stop_ix - start_ix),:]
 
 
-# %% find which time points have factors with NaNs
-# time is dim 0 of the factors array
-
-# nan_mask = np.isnan(lfads_factors)
-# nan_mask = np.any(nan_mask, axis=1)
-# nan_ix = np.where(nan_mask)[0]
-# nan_time = dataset.data.index.values[nan_ix]
-
-
 # %%  visualize activation in channel 68 with threshold for "active" step cycles
-
-import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
 # create a 3D continuous plot of the first 3 PCs
 neuron = 68 # 68 good for locomotion, 65 good for stim

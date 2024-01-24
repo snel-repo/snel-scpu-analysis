@@ -39,6 +39,7 @@ logger.addHandler(handler)
 # === begin SCRIPT PARAMETERS ==========================
 
 ADD_KINEMATICS_TO_DF = True
+DROP_XCORR_CHANS = False
 
 # load yaml config file
 yaml_config_path = "../configs/lfads_dataset_cfg.yaml"
@@ -63,14 +64,7 @@ ds_path = os.path.join(ds_base_dir, expt_name + ".nwb")
 ds_path_kin = os.path.join(ds_base_dir, kin_name + ".nwb")
 # --- load dataset from NWB
 logger.info(f"Loading {expt_name} from NWB")
-dataset = NWBDataset(ds_path, split_heldout=False)
-if ADD_KINEMATICS_TO_DF:
-    dataset_kin = NWBDataset(ds_path_kin, split_heldout=False)
-    dataset.data["kin_pos"] = dataset_kin.data["kin_pos"]
-
-# --- preprocess spiking data
-
-
+dataset = NWBDataset(ds_path_kin, split_heldout=False) if ADD_KINEMATICS_TO_DF else NWBDataset(ds_path, split_heldout=False)
 
 # --- drop spk channnels (if necessary)
 
@@ -97,8 +91,9 @@ chop_df = dataset.data
 # -- drop spk channels
 logger.info(f"Drop spike channels: {len(drop_spk_names)}/{chop_df.spikes.columns.values.size}")
 
-# if len(drop_spk_names) > 0:
-#     chop_df.drop(columns=drop_spk_names, axis=1, level=1, inplace=True)
+if DROP_XCORR_CHANS:
+    if len(drop_spk_names) > 0:
+        chop_df.drop(columns=drop_spk_names, axis=1, level=1, inplace=True)
 
 # --- create save dirs if they do not exist
 pkl_dir = os.path.join(lfads_save_dir, "pkls")
@@ -137,14 +132,12 @@ interface = LFADSInterface(
     random_seed=RAND_SEED,
     chop_fields_map=chop_fields_map,
 )
-
-DS_NAME_MOD= "_with_kin" if ADD_KINEMATICS_TO_DF else ""
   
 ds_name = (
     "lfads_" + NAME + "_" + ARRAY_SELECT + "_" + TYPE + "_" + str(BIN_SIZE) + ".h5"
 )
 ds_obj_name = (
-    "lfads_" + NAME + "_" + ARRAY_SELECT + "_" + TYPE + "_" + str(BIN_SIZE) + "_fulldataset" + DS_NAME_MOD + ".pkl"
+    "lfads_" + NAME + "_" + ARRAY_SELECT + "_" + TYPE + "_" + str(BIN_SIZE) + "_fulldataset.pkl"
 )
 
 INTERFACE_FILE = os.path.join(

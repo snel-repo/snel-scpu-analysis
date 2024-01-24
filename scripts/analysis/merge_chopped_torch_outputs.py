@@ -1,3 +1,14 @@
+"""
+PURPOSE: Merge chopped torch outputs with original dataset (and kinematics if available)
+
+REQUIREMENTS: lfads-torch model outputs, original dataset, interface object
+                                                ^                 ^
+                                                |_________________|
+                                        (created in setup_lfads_datasets.py)
+
+OUTPUTS: merged dataset object with original dataset and lfads outputs
+"""
+
 # %% INPUTS AND PATHS
 import os
 import pickle as pkl
@@ -25,11 +36,7 @@ logger.addHandler(handler)
 
 # load YAML file
 yaml_config_path = "../configs/lfads_dataset_cfg.yaml"
-lfads_dataset_cfg = yaml.load(open(yaml_config_path), Loader=yaml.FullLoader)
-
-path_config = lfads_dataset_cfg["PATH_CONFIG"]
-ld_cfg = lfads_dataset_cfg["DATASET"]
-merge_config = lfads_dataset_cfg["MERGE_PARAMETERS"]
+path_config, ld_cfg, merge_config = load_cfgs(yaml_config_path)
 
 
 # system inputs
@@ -93,3 +100,5 @@ dataset.data.lfads_factors_smooth_15 = dataset.data.lfads_factors_smooth_15.fill
 merged_full_output = os.path.join(run_dir, f"lfads_{expt_name}_{chan_select}_{run_type}_{bin_size}_full_merged_output.pkl")
 with open(merged_full_output, "wb") as f:
     dill.dump(dataset, f, protocol=dill.HIGHEST_PROTOCOL, recurse=True)
+
+# %%
