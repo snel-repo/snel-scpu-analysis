@@ -1,3 +1,9 @@
 [submodule "nwb_convert"]
 	path = nwb_convert
 	url = git@github.com:snel-repo/nwb_convert.git
+[submodule "lfads-torch"]
+	path = lfads-torch
+	url = https://github.com/arsedler9/lfads-torch.git
+[submodule "snel-toolkit"]
+	path = snel-toolkit
+	url = https://github.com/snel-repo/snel-toolkit.git
