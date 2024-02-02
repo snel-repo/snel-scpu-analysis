@@ -18,11 +18,16 @@ import sys
 import yaml
 import dill
 from analysis_utils import *
+import scipy.signal as signal
 # decoding imports
 from snel_toolkit.decoding import prepare_decoding_data
 from snel_toolkit.decoding import NeuralDecoder
 from sklearn.linear_model import Ridge
 import typing
+from sklearn.model_selection import KFold
+from sklearn.linear_model import Ridge
+from sklearn.metrics import r2_score
+
 
 # %%
 # Load everything
@@ -81,7 +86,7 @@ def concatenate_trials(df: pd.DataFrame, trials: typing.List[typing.Tuple[int, i
 Returns a slice of kinematic and lfads rates data for a given column name
 
 """
-def return_slice(column_name: str, use_smooth_data: bool = True) -> typing.Tuple[np.ndarray, np.ndarray]:
+def return_all_nonNan_slice(column_name: str, use_smooth_data: bool = True) -> typing.Tuple[np.ndarray, np.ndarray]:
 
     
     
@@ -104,9 +109,7 @@ Returns predicted kinematic data, linear regression coefficients, and r2 score
 def cross_pred(source, target, alpha=1e-2, kfolds=5):
     # source is 2D array of shape (n_bins, n_channels)
     # target is 1D array of shape (n_bins,) where each value is kinematic data
-    from sklearn.model_selection import KFold
-    from sklearn.linear_model import Ridge
-    from sklearn.metrics import r2_score
+    
 
     kf = KFold(n_splits=kfolds)
     lr = Ridge(alpha=alpha)
@@ -128,50 +131,79 @@ def cross_pred(source, target, alpha=1e-2, kfolds=5):
     r2 = r2_score(target, pred)
     return pred, lr_coef, r2
 
-# %%
-
-def subplot_all_kinematic_data(use_smooth_data: bool = True):
-
-    kin_data = dataset.data.kin_pos_smooth_8 if use_smooth_data else dataset.data.kin_pos
-
-    # create a figure and axis
-    fig, axs = plt.subplots(5, 2, figsize=(10, 12))
-    fig.suptitle('Kinematic Data')
-    big_ax = fig.add_subplot(111, frameon=False)
-    # Hide tick and tick label of the big subplot
-    big_ax.tick_params(labelcolor='none', top=False, bottom=False, left=False, right=False)
-    big_ax.grid(False)
-
-    # Set the labels
-    big_ax.set_xlabel('Time (bins)', labelpad=5)
-    big_ax.set_ylabel('Kinematic data', labelpad=0)
-
-    ax = axs.flatten()
-    # Loop through the columns
-    for idx, column_name in enumerate(kin_data.columns):
-        # Get slice of kinematic and lfads rates data
-        kin_slice, rates_slice = return_slice(column_name, use_smooth_data=use_smooth_data)
-        
-
-        # Predict kinematic data from lfads rates
-        predicted_data, _, r2_sklearn = cross_pred(rates_slice, kin_slice, alpha=9e0, kfolds=10)
-        # make r^2 score 2 decimal places
-        r2_sklearn = round(r2_sklearn, 4)
-        # add to subplot
-        ax[idx].plot(kin_slice, label='True')
-        ax[idx].plot(predicted_data, label='Predicted')
-        title = f"{column_name}, r^2: {r2_sklearn} smoothed" if use_smooth_data else f"{column_name}, r^2: {r2_sklearn} raw"
-        ax[idx].set_title(title)
-        ax[idx].legend()
-
-
-    # Add more vertical space
-    fig.subplots_adjust(hspace=0.5)
-    plt.show()
-
 
 
 # %% 
-subplot_all_kinematic_data(use_smooth_data=True)
+
+def diff_filter(x):
+        """differentation filter"""
+        return signal.savgol_filter(x, 27, 5, deriv=1, axis=0)
+
+def linear_regression(x, y, alpha=0):
+    """no cross validation"""
+    lr = Ridge(alpha=alpha)
+    lr.fit(x, y)
+    pred = lr.predict(x)
+    r2 = r2_score(y, pred)
+    return pred, r2
 
 # %%
+"""
+Takes column name and returns predicted kinematic data, true kinematic data, and r2 score
+"""
+def plot_r2_and_predicted_vs_actual(column_name:str, start_idx: int, stop_idx: int, use_smooth_data: bool = False):
+
+    kin_slice, rates_slice = return_all_nonNan_slice(column_name, use_smooth_data=use_smooth_data)
+    vel = diff_filter(kin_slice)
+
+
+    # slice vel and rates_slice to exclude handpicked_outliers
+
+    regression_vel_slice = vel[start_idx:stop_idx]
+    regression_rates_slice = rates_slice[start_idx:stop_idx]
+
+    # determine outliers    
+    outlier_min = np.argmin(regression_vel_slice)
+    outlier_max = np.argmax(regression_vel_slice)
+
+
+
+    # remove outliers
+    regression_vel_slice = np.delete(regression_vel_slice, [outlier_min, outlier_max])
+    regression_rates_slice = np.delete(regression_rates_slice, [outlier_min, outlier_max], axis=0)
+
+    # Predict kinematic data from lfads rates
+    predicted_vel, _, r2_sklearn = cross_pred(regression_rates_slice, regression_vel_slice, alpha=0.01, kfolds=10)
+    #predicted_vel, r2_sklearn = linear_regression(regression_rates_slice, regression_vel_slice, alpha=0)
+    return predicted_vel, regression_vel_slice, r2_sklearn
+
+fig, axs = plt.subplots(5, 2, figsize=(10, 12))
+fig.suptitle('Kinematic Data')
+big_ax = fig.add_subplot(111, frameon=False)
+# Hide tick and tick label of the big subplot
+big_ax.tick_params(labelcolor='none', top=False, bottom=False, left=False, right=False)
+big_ax.grid(False)
+
+# Set the labels
+big_ax.set_xlabel('Time (bins)', labelpad=5)
+big_ax.set_ylabel('Velocity', labelpad=0)
+
+ax = axs.flatten()
+
+for idx, column_name in enumerate(dataset.data.kin_pos.columns):
+    predicted_vel, vel, r2_sklearn = plot_r2_and_predicted_vs_actual(column_name, start_idx=9500+150, stop_idx=9500+750, use_smooth_data=False)
+    ax[idx].plot(vel, label='True')
+    ax[idx].plot(predicted_vel, label='Predicted')
+    title = f"{column_name}, r^2: {r2_sklearn}"
+
+    ax[idx].set_title(title)
+    ax[idx].legend()
+    ax[idx].spines['right'].set_visible(False)
+    ax[idx].spines['top'].set_visible(False)
+
+fig.subplots_adjust(hspace=0.5)
+plt.show()
+
+
+
+
