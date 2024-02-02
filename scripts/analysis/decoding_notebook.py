@@ -151,7 +151,7 @@ def linear_regression(x, y, alpha=0):
 """
 Takes column name and returns predicted kinematic data, true kinematic data, and r2 score
 """
-def plot_r2_and_predicted_vs_actual(column_name:str, start_idx: int, stop_idx: int, use_smooth_data: bool = False):
+def plot_r2_and_predicted_vs_actual(column_name:str, start_idx: int, stop_idx: int, alpha, use_smooth_data: bool = False):
 
     kin_slice, rates_slice = return_all_nonNan_slice(column_name, use_smooth_data=use_smooth_data)
     vel = diff_filter(kin_slice)
@@ -173,8 +173,8 @@ def plot_r2_and_predicted_vs_actual(column_name:str, start_idx: int, stop_idx: i
     regression_rates_slice = np.delete(regression_rates_slice, [outlier_min, outlier_max], axis=0)
 
     # Predict kinematic data from lfads rates
-    predicted_vel, _, r2_sklearn = cross_pred(regression_rates_slice, regression_vel_slice, alpha=0.01, kfolds=10)
-    #predicted_vel, r2_sklearn = linear_regression(regression_rates_slice, regression_vel_slice, alpha=0)
+    #predicted_vel, _, r2_sklearn = cross_pred(regression_rates_slice, regression_vel_slice, alpha=alpha, kfolds=10)
+    predicted_vel, r2_sklearn = linear_regression(regression_rates_slice, regression_vel_slice, alpha=alpha)
     return predicted_vel, regression_vel_slice, r2_sklearn
 
 fig, axs = plt.subplots(5, 2, figsize=(10, 12))
@@ -189,21 +189,31 @@ big_ax.set_xlabel('Time (bins)', labelpad=5)
 big_ax.set_ylabel('Velocity', labelpad=0)
 
 ax = axs.flatten()
+alpha_values = [0, 1e-3, 1e-2, 1e-1, 1, 10, 100, 1000]
 
-for idx, column_name in enumerate(dataset.data.kin_pos.columns):
-    predicted_vel, vel, r2_sklearn = plot_r2_and_predicted_vs_actual(column_name, start_idx=9500+150, stop_idx=9500+750, use_smooth_data=False)
-    ax[idx].plot(vel, label='True')
-    ax[idx].plot(predicted_vel, label='Predicted')
-    title = f"{column_name}, r^2: {r2_sklearn}"
+best_alpha = None
+best_r2 = -np.inf
+for alpha in alpha_values:
+    mean_r2 = 0
+    for idx, column_name in enumerate(dataset.data.kin_pos.columns):
+        predicted_vel, vel, r2_sklearn = plot_r2_and_predicted_vs_actual(column_name, start_idx=9500+150, stop_idx=9500+750, alpha=alpha, use_smooth_data=False)
+        mean_r2 += r2_sklearn
+        ax[idx].plot(vel, label='True')
+        ax[idx].plot(predicted_vel, label='Predicted')
+        title = f"{column_name}, r^2: {r2_sklearn}"
 
-    ax[idx].set_title(title)
-    ax[idx].legend()
-    ax[idx].spines['right'].set_visible(False)
-    ax[idx].spines['top'].set_visible(False)
+        ax[idx].set_title(title)
+        ax[idx].legend()
+        ax[idx].spines['right'].set_visible(False)
+        ax[idx].spines['top'].set_visible(False)
+    mean_r2 /= len(dataset.data.kin_pos.columns)
 
-fig.subplots_adjust(hspace=0.5)
-plt.show()
+    if mean_r2 > best_r2:
+        best_r2 = mean_r2
+        best_alpha = alpha
+    fig.subplots_adjust(hspace=0.5)
+    plt.show()
 
-
+# %% 
 
 
