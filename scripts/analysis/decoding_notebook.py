@@ -24,7 +24,7 @@ from snel_toolkit.decoding import prepare_decoding_data
 from snel_toolkit.decoding import NeuralDecoder
 from sklearn.linear_model import Ridge
 import typing
-from sklearn.model_selection import KFold
+from sklearn.model_selection import KFold, cross_val_score, GridSearchCV
 from sklearn.linear_model import Ridge
 from sklearn.metrics import r2_score
 
@@ -139,19 +139,33 @@ def diff_filter(x):
         """differentation filter"""
         return signal.savgol_filter(x, 27, 5, deriv=1, axis=0)
 
-def linear_regression(x, y, alpha=0):
-    """no cross validation"""
-    lr = Ridge(alpha=alpha)
-    lr.fit(x, y)
-    pred = lr.predict(x)
-    r2 = r2_score(y, pred)
-    return pred, r2
+def linear_regression(x, y):
+    """With GridSearchCV"""
+    lr = Ridge()
+    
+    # Define the grid of hyperparameters to search
+    param_grid = {'alpha': [0, 0.001, 0.01, 0.1, 1, 10, 100]}
+    
+    # Set up the grid search
+    grid_search = GridSearchCV(lr, param_grid, cv=5, scoring='r2')
+    
+    # Perform the grid search
+    grid_search.fit(x, y)
+    
+    # Use the best model to make predictions
+    pred = grid_search.best_estimator_.predict(x)
+    
+    # Get the best R^2 score and the best parameters
+    r2 = grid_search.best_score_
+    alpha = grid_search.best_params_["alpha"]
+    
+    return pred, r2, alpha
 
 # %%
 """
 Takes column name and returns predicted kinematic data, true kinematic data, and r2 score
 """
-def plot_r2_and_predicted_vs_actual(column_name:str, start_idx: int, stop_idx: int, alpha, use_smooth_data: bool = False):
+def predict_kinematics(column_name:str, start_idx: int, stop_idx: int, use_smooth_data: bool = False):
 
     kin_slice, rates_slice = return_all_nonNan_slice(column_name, use_smooth_data=use_smooth_data)
     vel = diff_filter(kin_slice)
@@ -174,11 +188,11 @@ def plot_r2_and_predicted_vs_actual(column_name:str, start_idx: int, stop_idx: i
 
     # Predict kinematic data from lfads rates
     #predicted_vel, _, r2_sklearn = cross_pred(regression_rates_slice, regression_vel_slice, alpha=alpha, kfolds=10)
-    predicted_vel, r2_sklearn = linear_regression(regression_rates_slice, regression_vel_slice, alpha=alpha)
-    return predicted_vel, regression_vel_slice, r2_sklearn
+    predicted_vel, r2_sklearn, best_alpha = linear_regression(regression_rates_slice, regression_vel_slice)
+    return predicted_vel, regression_vel_slice, r2_sklearn, best_alpha
 
 fig, axs = plt.subplots(5, 2, figsize=(10, 12))
-fig.suptitle('Kinematic Data')
+fig.suptitle('Cross validated linear regression predictions of kinematic data from lfads rates', fontsize=16)
 big_ax = fig.add_subplot(111, frameon=False)
 # Hide tick and tick label of the big subplot
 big_ax.tick_params(labelcolor='none', top=False, bottom=False, left=False, right=False)
@@ -189,31 +203,52 @@ big_ax.set_xlabel('Time (bins)', labelpad=5)
 big_ax.set_ylabel('Velocity', labelpad=0)
 
 ax = axs.flatten()
-alpha_values = [0, 1e-3, 1e-2, 1e-1, 1, 10, 100, 1000]
 
 best_alpha = None
 best_r2 = -np.inf
-for alpha in alpha_values:
-    mean_r2 = 0
-    for idx, column_name in enumerate(dataset.data.kin_pos.columns):
-        predicted_vel, vel, r2_sklearn = plot_r2_and_predicted_vs_actual(column_name, start_idx=9500+150, stop_idx=9500+750, alpha=alpha, use_smooth_data=False)
-        mean_r2 += r2_sklearn
-        ax[idx].plot(vel, label='True')
-        ax[idx].plot(predicted_vel, label='Predicted')
-        title = f"{column_name}, r^2: {r2_sklearn}"
+best_alphas = []
+r2_values_per_column = np.zeros(len(dataset.data.kin_pos.columns))
+for idx, column_name in enumerate(dataset.data.kin_pos.columns):
+    predicted_vel, vel, r2_sklearn, best_alpha = predict_kinematics(column_name, start_idx=9500+150, stop_idx=9500+750, use_smooth_data=False)
+    r2_values_per_column[idx] = r2_sklearn
+    best_alphas.append(best_alpha)
+    
+    ax[idx].plot(vel, label='True')
+    ax[idx].plot(predicted_vel, label='Predicted')
+    title = f"{column_name}, r^2: {r2_sklearn}"
 
-        ax[idx].set_title(title)
-        ax[idx].legend()
-        ax[idx].spines['right'].set_visible(False)
-        ax[idx].spines['top'].set_visible(False)
-    mean_r2 /= len(dataset.data.kin_pos.columns)
+    ax[idx].set_title(title)
+    ax[idx].legend()
+    ax[idx].spines['right'].set_visible(False)
+    ax[idx].spines['top'].set_visible(False)
 
-    if mean_r2 > best_r2:
-        best_r2 = mean_r2
-        best_alpha = alpha
-    fig.subplots_adjust(hspace=0.5)
-    plt.show()
+fig.subplots_adjust(hspace=0.5)
+plt.show()
 
 # %% 
 
 
+# plot ankle_x position and velocity over time
+
+fig, ax = plt.subplots(2, 1, figsize=(10, 5))
+kin_slice, rates_slice = return_all_nonNan_slice('ankle_x', use_smooth_data=False)
+vel = diff_filter(kin_slice)
+ax[0].plot(kin_slice)
+ax[0].set_title('ankle_x position over time')
+ax[0].set_xlabel('Time (bins)')
+ax[0].set_ylabel('Position')
+ax[0].legend()
+ax[0].spines['right'].set_visible(False)
+ax[0].spines['top'].set_visible(False)
+
+ax[1].plot(vel)
+ax[1].set_title('ankle_x velocity over time')
+ax[1].set_xlabel('Time (bins)')
+ax[1].set_ylabel('Velocity')
+ax[1].legend()
+ax[1].spines['right'].set_visible(False)
+ax[1].spines['top'].set_visible(False)
+fig.subplots_adjust(hspace=0.5)
+plt.show()
+
+# %%
