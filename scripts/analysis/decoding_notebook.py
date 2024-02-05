@@ -27,6 +27,8 @@ import typing
 from sklearn.model_selection import KFold
 from sklearn.linear_model import Ridge
 from sklearn.metrics import r2_score
+from sklearn.model_selection import train_test_split
+
 
 
 # %%
@@ -139,13 +141,18 @@ def diff_filter(x):
         """differentation filter"""
         return signal.savgol_filter(x, 27, 5, deriv=1, axis=0)
 
-def linear_regression(x, y, alpha=0):
+def linear_regression_train_val(x, y, alpha=0):
     """no cross validation"""
     lr = Ridge(alpha=alpha)
-    lr.fit(x, y)
-    pred = lr.predict(x)
-    r2 = r2_score(y, pred)
-    return pred, r2
+    x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2)
+   
+    lr.fit(x_train, y_train)
+    test_pred = lr.predict(x_test)
+    train_pred = lr.predict(x_train)
+
+    r2_test = r2_score(y_test, test_pred)
+    r2_train = r2_score(y_train, train_pred)
+    return test_pred, r2_test, r2_train
 
 # %%
 """
@@ -174,8 +181,8 @@ def plot_r2_and_predicted_vs_actual(column_name:str, start_idx: int, stop_idx: i
 
     # Predict kinematic data from lfads rates
     #predicted_vel, _, r2_sklearn = cross_pred(regression_rates_slice, regression_vel_slice, alpha=alpha, kfolds=10)
-    predicted_vel, r2_sklearn = linear_regression(regression_rates_slice, regression_vel_slice, alpha=alpha)
-    return predicted_vel, regression_vel_slice, r2_sklearn
+    predicted_vel, r2_test, r2_train = linear_regression_train_val(regression_rates_slice, regression_vel_slice, alpha=alpha)
+    return predicted_vel, regression_vel_slice, r2_test, r2_train
 
 fig, axs = plt.subplots(5, 2, figsize=(10, 12))
 fig.suptitle('Kinematic Data')
@@ -189,14 +196,22 @@ big_ax.set_xlabel('Time (bins)', labelpad=5)
 big_ax.set_ylabel('Velocity', labelpad=0)
 
 ax = axs.flatten()
-alpha_values = [0, 1e-3, 1e-2, 1e-1, 1, 10, 100, 1000]
+alpha_values = [1e-10, 1e-9, 1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1]
 
 best_alpha = None
 best_r2 = -np.inf
+r2_values_test = []
+r2_values_train = []
+r2_sklearn = 0
 for alpha in alpha_values:
     mean_r2 = 0
     for idx, column_name in enumerate(dataset.data.kin_pos.columns):
-        predicted_vel, vel, r2_sklearn = plot_r2_and_predicted_vs_actual(column_name, start_idx=9500+150, stop_idx=9500+750, alpha=alpha, use_smooth_data=False)
+        if idx > 0:
+            break
+        predicted_vel, vel, r2_test, r2_train = plot_r2_and_predicted_vs_actual(column_name, start_idx=9500+150, stop_idx=9500+750, alpha=alpha, use_smooth_data=False)
+        r2_values_test.append(r2_test)
+        r2_values_train.append(r2_train)
+        
         mean_r2 += r2_sklearn
         ax[idx].plot(vel, label='True')
         ax[idx].plot(predicted_vel, label='Predicted')
@@ -214,6 +229,20 @@ for alpha in alpha_values:
     fig.subplots_adjust(hspace=0.5)
     plt.show()
 
+
 # %% 
+plt.plot(alpha_values, r2_values_test, 'o-', label='Test')
+plt.plot(alpha_values, r2_values_train, 'o-', label='Train')
 
+plt.xlabel('Alpha')
+plt.ylabel('R^2')
+plt.title('R^2 vs Alpha')
 
+plt.xscale('log')
+plt.xlabel('Alpha')
+plt.ylabel('R^2')
+plt.xlim([0, 1e3])
+plt.legend()
+plt.show()
+
+# %%
