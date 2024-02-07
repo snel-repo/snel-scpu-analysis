@@ -24,7 +24,7 @@ from snel_toolkit.decoding import prepare_decoding_data
 from snel_toolkit.decoding import NeuralDecoder
 from sklearn.linear_model import Ridge
 import typing
-from sklearn.model_selection import KFold
+from sklearn.model_selection import KFold, cross_val_score, GridSearchCV
 from sklearn.linear_model import Ridge
 from sklearn.metrics import r2_score
 from sklearn.model_selection import train_test_split
@@ -162,6 +162,7 @@ def diff_filter(x):
         """differentation filter"""
         return signal.savgol_filter(x, 27, 5, deriv=1, axis=0)
 
+
 def linear_regression_train_val(x, y, alpha=0, folds=5):
     """
     x is 2D array of shape (n_bins, n_channels) which is (samples, features)
@@ -210,7 +211,9 @@ def linear_regression_train_val(x, y, alpha=0, folds=5):
 """
 Takes column name and returns predicted kinematic data, true kinematic data, and r2 score
 """
+
 def column_name_to_predict_and_r2(column_name:str, start_idx: int, stop_idx: int, alpha, folds: int, use_smooth_data: bool = False):
+
 
     kin_slice, rates_slice = return_all_nonNan_slice(column_name, use_smooth_data=use_smooth_data)
     vel = diff_filter(kin_slice)
@@ -232,11 +235,13 @@ def column_name_to_predict_and_r2(column_name:str, start_idx: int, stop_idx: int
     regression_rates_slice = np.delete(regression_rates_slice, [outlier_min, outlier_max], axis=0)
     # Predict kinematic data from lfads rates
     #predicted_vel, _, r2_sklearn = cross_pred(regression_rates_slice, regression_vel_slice, alpha=alpha, kfolds=10)
+
     predicted_vel, r2_test, r2_train = linear_regression_train_val(regression_rates_slice, regression_vel_slice, alpha=alpha, folds=folds)
     return predicted_vel, regression_vel_slice, r2_test, r2_train
 
 fig, axs = plt.subplots(1, 1, figsize=(10, 12))
 fig.suptitle('Kinematic Data')
+
 big_ax = fig.add_subplot(111, frameon=False)
 # Hide tick and tick label of the big subplot
 big_ax.tick_params(labelcolor='none', top=False, bottom=False, left=False, right=False)
@@ -245,6 +250,7 @@ big_ax.grid(False)
 # Set the labels
 big_ax.set_xlabel('Time (bins)', labelpad=5)
 big_ax.set_ylabel('Velocity', labelpad=0)
+
 
 # ax = axs.flatten()
 alpha_values = [1e-10, 1e-9, 1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1, 10, 100, 1000, 10000]
@@ -283,6 +289,7 @@ for fold in folds:
     r2_values_test_all.append(r2_test_value_fold)
     r2_values_train_all.append(r2_train_value_fold)
 
+
 # %% 
 for i in range(len(folds)):
     plt.plot(alpha_values, r2_values_test_all[i], label=f'{folds[i]} folds test')
@@ -295,6 +302,7 @@ plt.title('R^2 vs Alpha')
 plt.xscale('log')
 plt.xlabel('Alpha')
 plt.ylabel('R^2')
+
 
 plt.legend()
 plt.show()
