@@ -47,30 +47,9 @@ dataset, bin_size = load_dataset_and_binsize(yaml_config_path)
 
 # %% 
 # Smooth kinematic data and factors
-# dataset.smooth_spk(signal_type='kin_pos', gauss_width=3, name='smooth_3', overwrite=False)
+dataset.smooth_spk(signal_type='kin_pos', gauss_width=3, name='smooth_3', overwrite=False)
 # dataset.smooth_spk(signal_type='lfads_factors', gauss_width=8, name='smooth_8', overwrite=False)
 # dataset.data.lfads_factors_smooth_8 = dataset.data.lfads_factors_smooth_8.fillna(0)
-# %%
-# plot factors over time
-# factors = dataset.data.lfads_factors.values
-
-# fig, axs = plt.subplots(1, 1, figsize=(20, 12))
-# axs.plot(factors[:, 0])
-# axs.set_title('Factor 1')
-# axs.set_xlabel('Bins')
-# axs.set_ylabel('Arbitrary Units')
-# plt.show()
-
-# plot rates over time
-
-# rates = dataset.data.lfads_rates.values
-# for i in range(4):
-#     fig, axs = plt.subplots(1, 1, figsize=(20, 12))
-#     axs.plot(rates[:, i])
-#     axs.set_title(f'Channel {i}')
-#     axs.set_xlabel('Bins')
-#     axs.set_ylabel('Firing rate')
-#     plt.show()
 
 # %%
 '''
@@ -132,36 +111,7 @@ def return_all_nonNan_slice(column_name: str, use_smooth_data: bool = True) -> t
     kin_slice = concatenate_trials(all_kin_data[column_name], change_indices)
     rates_slice = concatenate_trials(all_rates_data, change_indices)
     return kin_slice, rates_slice
-"""
-Predict kinematic data from lfads rates
 
-Returns predicted kinematic data, linear regression coefficients, and r2 score
-
-"""
-def cross_pred(source, target, alpha=1e-2, kfolds=5):
-    # source is 2D array of shape (n_bins, n_channels)
-    # target is 1D array of shape (n_bins,) where each value is kinematic data
-    
-
-    kf = KFold(n_splits=kfolds)
-    lr = Ridge(alpha=alpha)
-    # pred is 1D array of shape (n_bins,) where each value is predicted kinematic data
-    pred = np.zeros_like(target)
-    
-    lr_coefs = []
-    # Loop through kfolds and fit model
-    for train_ix, test_ix in kf.split(source):
-        X_train, X_test = source[train_ix,:], source[test_ix,:]
-        y_train, y_test = target[train_ix], target[test_ix]
-        lr.fit(X_train, y_train)
-        lr_coefs.append(lr.coef_)
-        pred[test_ix] = lr.predict(X_test)
-
-
-
-    lr_coef = np.mean(np.stack(lr_coefs),axis=0)  
-    r2 = r2_score(target, pred)
-    return pred, lr_coef, r2
 
 # %% 
 
@@ -172,93 +122,35 @@ def diff_filter(x):
 
 def linear_regression_train_val(x, y, alpha=0, folds=5):
     """
+    Function to perform linear regression with cross validation to decode kinematic data from neural data (eg. lfads rates, factors, smooth spikes)
     x is 2D array of shape (n_bins, n_channels) which is (samples, features)
     y is 1D array of shape (n_bins,) where each value is kinematic data
     """
-    scaler = MinMaxScaler()
 
-    if folds == 1:
-        lr = Ridge(alpha=alpha)
-        x_train, x_test, y_train, y_test = train_test_split(x, y, shuffle=False, test_size=0.2)
+    kf = KFold(n_splits=folds, shuffle=True, random_state=42)
+    lr = Ridge(alpha=alpha)
+    
+    r2_test = 0
+    r2_train = 0
+    fold_mean_x = [] # for test data
+    fold_mean_y = [] # for test data
+    test_pred = np.zeros_like(y)
 
-        x_train = scaler.fit_transform(x_train)
-        x_test = scaler.transform(x_test)
+    for train_ix, test_ix in kf.split(x):
+        x_train, x_test = x[train_ix, :], x[test_ix, :]
+        y_train, y_test = y[train_ix], y[test_ix]
+
 
         lr.fit(x_train, y_train)
-        test_pred = lr.predict(x_test)
+        test_pred[test_ix] = lr.predict(x_test)
         train_pred = lr.predict(x_train)
-
-        r2_test = r2_score(y_test, test_pred)
-        r2_train = r2_score(y_train, train_pred)
-
-    else:
-        kf = KFold(n_splits=folds)
-        tss = TimeSeriesSplit(n_splits=folds)
-        lr = Ridge(alpha=alpha)
-        # test_pred = np.zeros_like(y)
-        # train_pred = np.zeros_like(y)
-        r2_test = 0
-        r2_train = 0
-        fold_mean_x = [] # for test data
-        fold_mean_y = [] # for test data
-        # x = moving_window_normalize(x, 5)
-        # y = moving_window_normalize(y, 5)
-        test_pred = np.zeros_like(y)
-
-
-
-
-        # large_variance_channels = [28,61,87,33,5,86,88,82,24,42,20, 30]
-        # x = np.delete(x, large_variance_channels, axis=1)
-        for train_ix, test_ix in kf.split(x):
-            x_train, x_test = x[train_ix, :], x[test_ix, :]
-            y_train, y_test = y[train_ix], y[test_ix]
-            x_train = scaler.fit_transform(x_train)
-            x_test = scaler.transform(x_test)
-
-            lr.fit(x_train, y_train)
-            test_pred[test_ix] = lr.predict(x_test)
-            train_pred = lr.predict(x_train)
-            r2_test += r2_score(y_test, test_pred[test_ix])
-            r2_train += r2_score(y_train, train_pred)
-            fold_mean_x.append(np.mean(x_test,axis=0))
-            fold_mean_y.append(np.mean(y_test))
-        r2_test /= folds
-        r2_train /= folds
-        # get 0th channel for each fold
-        # fold_mean_x = np.array(fold_mean_x) # (fold, channel) each element is mean of channel
-        # fold_mean_y = np.array(fold_mean_y) # (fold,) each element is mean of kinematic data
-        # fold_mean_x /= np.mean(x, axis=0) # normalize mean
-        # variances = np.var(fold_mean_x, axis=0) # variance of each channel
-
-        # indices = np.argsort(variances)[::-1] # descending order
-
-        # fold_mean_x = fold_mean_x[:, indices] # sort channels by variance
-        # sorted_variances = variances[indices]
-
-        # # Normalize variances to [0,1] for color mapping
-        # normalized_variances = variances[indices] / np.max(variances)
-
-        # # Create a colormap
-        # cmap = cm.get_cmap('viridis')
-        # norm = colors.Normalize(vmin=np.min(variances), vmax=np.max(variances))
-
-        # subplot
-        # fig, axs = plt.subplots(1, 2, figsize=(10, 12))
-        # axs[0].plot(range(folds), fold_mean_y, label='Fold Mean Rates')
-        # axs[0].set_xlabel('Fold')
-        # axs[0].set_ylabel('Mean')
-        # axs[0].set_title('Mean of Predicted Values for Each Fold')
-        # axs[0].legend()
-        # for chan_num in range(fold_mean_x.shape[1]):
-        #     plt.plot(range(folds), fold_mean_x[:, chan_num], 'o-', color=cmap(normalized_variances[chan_num]), label=f'Channel {indices[chan_num]}')
-
-        # plt.xlabel('Fold')
-        # plt.ylabel('Mean Normalized')
-        # plt.title(f'Mean of Rates Data for every channel. # of Fold {folds} and alpha {alpha}')
-        # plt.colorbar(cm.ScalarMappable(norm=norm, cmap=cmap), label='Variance')
-
-        # plt.show()
+        r2_test += r2_score(y_test, test_pred[test_ix])
+        r2_train += r2_score(y_train, train_pred)
+        fold_mean_x.append(np.mean(x_test,axis=0))
+        fold_mean_y.append(np.mean(y_test))
+    r2_test /= folds
+    r2_train /= folds
+ 
 
     return test_pred, r2_test, r2_train
 
@@ -355,13 +247,13 @@ for fold in folds:
         for idx, column_name in enumerate(dataset.data.kin_pos.columns):
             if idx > 0:
                 break
-            predicted_vel, vel, r2_test, r2_train = column_name_to_predict_and_r2(column_name, start_idx=[9650], stop_idx=[9650+600], alpha=alpha, use_smooth_data=False, folds=fold)
+            predicted_vel, vel, r2_test, r2_train = column_name_to_predict_and_r2(column_name, start_idx=[9650], stop_idx=[9650+600], alpha=alpha, use_smooth_data=True, folds=fold)
             r2_test_value_fold.append(r2_test)
             r2_train_value_fold.append(r2_train)
             
             ax[i].plot(vel, label='True')
             ax[i].plot(predicted_vel, label='Predicted')
-            title = f"r^2 test: {round(r2_test, 4)} r^2 train: {round(r2_train, 4)}, alpha: {alpha}, folds: {fold}"
+            title = f"r^2 test: {round(r2_test, 3)} r^2 train: {round(r2_train, 3)}, alpha: {alpha}, folds: {fold}"
 
             ax[i].set_title(title)
             ax[i].set_xlabel('Time (bins)')
@@ -375,23 +267,6 @@ for fold in folds:
     plt.show()
     r2_values_test_all.append(r2_test_value_fold)
     r2_values_train_all.append(r2_train_value_fold)
-
-# %%
-# # visualize variance of each channel
-# kin_slice, rates_slice = return_all_nonNan_slice('ankle_x', use_smooth_data=False)
-# rates_slice = np.log(rates_slice + 1e-10)
-# rates_slice = rates_slice[9650:9650+600]
-# var = np.var(rates_slice, axis=0)
-# print(var.shape)
-# print(var)
-# plt.plot(var)
-# plt.title('Variance of each channel')
-# plt.xlabel('Channel')
-# plt.ylabel('Variance')
-
-# # get indices of channels with large variance
-# large_variance_channels = np.where(var > 10)
-# print(large_variance_channels)
 
 
 # %% 
