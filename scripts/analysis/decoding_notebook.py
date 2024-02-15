@@ -29,8 +29,8 @@ from sklearn.model_selection import KFold, cross_val_score, GridSearchCV
 from sklearn.linear_model import Ridge
 from sklearn.metrics import r2_score
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler
 from sklearn.model_selection import TimeSeriesSplit
-
 import matplotlib.cm as cm
 import matplotlib.colors as colors
 
@@ -46,8 +46,10 @@ dataset, bin_size = load_dataset_and_binsize(yaml_config_path)
 # dataset has kinematic data, smoothed spikes, and smoothed lfads_factors
 
 # %% 
-# Smooth kinematic data
-#dataset.smooth_spk(signal_type='kin_pos', gauss_width=8, name='smooth_8', overwrite=False)
+# Smooth kinematic data and factors
+# dataset.smooth_spk(signal_type='kin_pos', gauss_width=3, name='smooth_3', overwrite=False)
+# dataset.smooth_spk(signal_type='lfads_factors', gauss_width=8, name='smooth_8', overwrite=False)
+# dataset.data.lfads_factors_smooth_8 = dataset.data.lfads_factors_smooth_8.fillna(0)
 # %%
 # plot factors over time
 # factors = dataset.data.lfads_factors.values
@@ -120,8 +122,9 @@ def return_all_nonNan_slice(column_name: str, use_smooth_data: bool = True) -> t
     
     
     if use_smooth_data:
-        all_kin_data = dataset.data.kin_pos_smooth_8
+        all_kin_data = dataset.data.kin_pos_smooth_3
         all_rates_data = dataset.data.lfads_rates_smooth_8
+        
     else:
         all_kin_data = dataset.data.kin_pos
         all_rates_data = dataset.data.lfads_rates
@@ -172,10 +175,14 @@ def linear_regression_train_val(x, y, alpha=0, folds=5):
     x is 2D array of shape (n_bins, n_channels) which is (samples, features)
     y is 1D array of shape (n_bins,) where each value is kinematic data
     """
+    scaler = MinMaxScaler()
 
     if folds == 1:
         lr = Ridge(alpha=alpha)
-        x_train, x_test, y_train, y_test = train_test_split(x, y, shuffle=True, test_size=0.2)
+        x_train, x_test, y_train, y_test = train_test_split(x, y, shuffle=False, test_size=0.2)
+
+        x_train = scaler.fit_transform(x_train)
+        x_test = scaler.transform(x_test)
 
         lr.fit(x_train, y_train)
         test_pred = lr.predict(x_test)
@@ -185,29 +192,8 @@ def linear_regression_train_val(x, y, alpha=0, folds=5):
         r2_train = r2_score(y_train, train_pred)
 
     else:
-        """
-        variance channels sorted descending order
-        [5.16522246 2.93424483 2.57730398 2.5385062  2.40587629 2.32626326
- 2.23327391 2.21452203 2.13587281 2.10802132 2.0926351  2.06493209
- 2.05003696 2.03460004 2.00813071 1.96947407 1.95340772 1.88638498
- 1.84227467 1.67509189 1.67095371 1.64857727 1.6115832  1.60164427
- 1.57764281 1.54246901 1.51767094 1.47130332 1.47068484 1.46039802
- 1.38324884 1.34198107 1.28362665 1.23286746 1.20691066 1.18028282
- 1.10306594 1.02229998 0.99460861 0.99460616 0.96967062 0.96166463
- 0.94271015 0.94121756 0.8995361  0.89527348 0.88847127 0.85299992
- 0.80059576 0.79441946 0.76340501 0.76146608 0.70342064 0.69882349
- 0.69864316 0.69397564 0.67870717 0.66734888 0.60803599 0.60129593
- 0.59056843 0.57843648 0.57570408 0.55761227 0.54901659 0.5274489
- 0.51840433 0.49899345 0.48593633 0.45806388 0.41386854 0.40334881
- 0.38496376 0.37464683 0.37035802 0.35268387 0.31074842 0.29885579
- 0.27227127 0.23743894 0.23719647 0.23056927 0.13322168 0.10682749
- 0.08867252 0.07373564 0.04054569 0.03784658 0.01746072]
-
-        [28 16 81 33  5 86 88 82 24 42 20 30 75 39 77 37 19 29 67 80 18 73 72 62
-  3 84 70 31  6 47 66 36 43 61 23 53  0 34 50 76 15 17 59 74 14 11  8 51
- 22 64 12 78 27 83 55 71 60 63 32 56 35 65 69  1 21 45 13 38  7 52 44 10
- 79 57  2 41 68 58 48  9 87 46  4 85 40 25 49 54 26]"""
-        kf = KFold(n_splits=folds, shuffle=True, random_state=42) 
+        kf = KFold(n_splits=folds)
+        tss = TimeSeriesSplit(n_splits=folds)
         lr = Ridge(alpha=alpha)
         # test_pred = np.zeros_like(y)
         # train_pred = np.zeros_like(y)
@@ -220,11 +206,16 @@ def linear_regression_train_val(x, y, alpha=0, folds=5):
         test_pred = np.zeros_like(y)
 
 
+
+
         # large_variance_channels = [28,61,87,33,5,86,88,82,24,42,20, 30]
         # x = np.delete(x, large_variance_channels, axis=1)
         for train_ix, test_ix in kf.split(x):
             x_train, x_test = x[train_ix, :], x[test_ix, :]
             y_train, y_test = y[train_ix], y[test_ix]
+            x_train = scaler.fit_transform(x_train)
+            x_test = scaler.transform(x_test)
+
             lr.fit(x_train, y_train)
             test_pred[test_ix] = lr.predict(x_test)
             train_pred = lr.predict(x_train)
@@ -296,12 +287,12 @@ def column_name_to_predict_and_r2(column_name:str, start_idx: List[int], stop_id
 
     kin_slice, rates_slice = return_all_nonNan_slice(column_name, use_smooth_data=use_smooth_data)
     vel = diff_filter(kin_slice)
-    #rates_slice = np.log(rates_slice + 1e-6)
+    regression_rates_slice = np.log(rates_slice + 1e-10)
 
     # slice vel and rates_slice to exclude handpicked_outliers
 
     regression_vel_slice = concat_data_given_start_stop_indices(vel, start_idx, stop_idx)
-    regression_rates_slice = concat_data_given_start_stop_indices(rates_slice, start_idx, stop_idx)
+    regression_rates_slice = concat_data_given_start_stop_indices(regression_rates_slice, start_idx, stop_idx)
 
     # # plot rates slice using pcolor
     # fig, ax = plt.subplots(1, 1, figsize=(10, 12))
@@ -313,15 +304,15 @@ def column_name_to_predict_and_r2(column_name:str, start_idx: List[int], stop_id
     # plt.show()
 
 
-    # determine outliers of velocity   
+    #determine outliers of velocity   
     outlier_min = np.argmin(regression_vel_slice)
     outlier_max = np.argmax(regression_vel_slice)
     regression_vel_slice = np.delete(regression_vel_slice, [outlier_min, outlier_max])
     regression_rates_slice = np.delete(regression_rates_slice, [outlier_min, outlier_max], axis=0)
 
-
-
-
+    var = np.var(regression_rates_slice, axis=0)
+    large_variance_channels = np.where(var > 5)
+    regression_rates_slice = np.delete(regression_rates_slice, large_variance_channels, axis=1) # remove channels with large variance
 
     # remove outliers
     
@@ -333,7 +324,7 @@ def column_name_to_predict_and_r2(column_name:str, start_idx: List[int], stop_id
 
 
 # %%
-fig, axs = plt.subplots(3, 2, figsize=(10, 12))
+fig, axs = plt.subplots(4, 2, figsize=(10, 12))
 fig.suptitle('Kinematic Data')
 
 big_ax = fig.add_subplot(111, frameon=False)
@@ -348,7 +339,8 @@ big_ax.set_ylabel('Velocity', labelpad=0)
 
 ax = axs.flatten()
 #alpha_values = [1e-10, 1e-9, 1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1, 10, 100, 1000, 10000]
-alpha_values = [1e-10, 1e-6, 1e-2, 10, 10000, 1000000]
+alpha_values = [1e-10, 1e-6, 1e-2, 1e-1, 1, 3, 10, 100]
+
 best_alpha = None
 best_r2 = -np.inf
 r2_values_test_all = [] 
@@ -363,7 +355,7 @@ for fold in folds:
         for idx, column_name in enumerate(dataset.data.kin_pos.columns):
             if idx > 0:
                 break
-            predicted_vel, vel, r2_test, r2_train = column_name_to_predict_and_r2(column_name, start_idx=[9650,11000], stop_idx=[9650+600, 11000+2200], alpha=alpha, use_smooth_data=False, folds=fold)
+            predicted_vel, vel, r2_test, r2_train = column_name_to_predict_and_r2(column_name, start_idx=[9650], stop_idx=[9650+600], alpha=alpha, use_smooth_data=False, folds=fold)
             r2_test_value_fold.append(r2_test)
             r2_train_value_fold.append(r2_train)
             
@@ -379,9 +371,28 @@ for fold in folds:
             ax[i].spines['top'].set_visible(False)
 
     fig.subplots_adjust(hspace=0.5)
+    fig.subplots_adjust(wspace=0.5)
     plt.show()
     r2_values_test_all.append(r2_test_value_fold)
     r2_values_train_all.append(r2_train_value_fold)
+
+# %%
+# # visualize variance of each channel
+# kin_slice, rates_slice = return_all_nonNan_slice('ankle_x', use_smooth_data=False)
+# rates_slice = np.log(rates_slice + 1e-10)
+# rates_slice = rates_slice[9650:9650+600]
+# var = np.var(rates_slice, axis=0)
+# print(var.shape)
+# print(var)
+# plt.plot(var)
+# plt.title('Variance of each channel')
+# plt.xlabel('Channel')
+# plt.ylabel('Variance')
+
+# # get indices of channels with large variance
+# large_variance_channels = np.where(var > 10)
+# print(large_variance_channels)
+
 
 # %% 
 for i in range(len(folds)):
@@ -390,7 +401,7 @@ for i in range(len(folds)):
 
 plt.xlabel('Alpha')
 plt.ylabel('R^2')
-plt.title('R^2 vs Alpha 1800')
+plt.title('R^2 vs Alpha')
 
 plt.xscale('log')
 plt.xlabel('Alpha')
@@ -401,33 +412,73 @@ plt.legend()
 plt.show()
 
 # %%
-plt.plot(alpha_values, r2_values_test_all[0], label=f'{folds[0]} test')
-plt.plot(alpha_values, r2_values_train_all[0], label=f'{folds[0]} train')
-plt.title("R^2 vs Alpha for 1 fold")
-plt.xscale('log')
-plt.xlabel('Alpha')
-plt.ylabel('R^2')
-plt.legend()
-plt.show()
-# %%
-plt.plot(alpha_values, r2_values_test_all[1], label=f'{folds[1]} test')
-plt.plot(alpha_values, r2_values_train_all[1], label=f'{folds[1]} train')
-plt.title("R^2 vs Alpha for 2 fold")
-plt.xscale('log')
-plt.xlabel('Alpha')
-plt.ylabel('R^2')
-plt.legend()
-plt.show()
-# %%
+# Toy dataset 
+from sklearn.datasets import make_regression
+X, y = make_regression(n_samples=600, n_features=1, noise=0.5)
+folds = [1,5,10,20]
+r2_values_test_all = []
+r2_values_train_all = []
+alpha_values = [1e-10, 1e-2, 1, 10, 100]
+plot = True
+fig, axs = plt.subplots(1, 2, figsize=(10, 4))
+for fold in folds:
+    r2_test_value_fold = []
+    r2_train_value_fold = []
+    for alpha in alpha_values:
 
+        pred, r2_test, r2_train = linear_regression_train_val(X, y, alpha=alpha, folds=fold)
+        if plot and fold == 10 and alpha == 1e-2:
+            axs[0].plot(X, y, label='True')
+            axs[0].plot(X, pred, label='Predicted')
+            axs[0].set_title(f'Predicted vs True.')
+            axs[0].set_xlabel('X')
+            axs[0].set_ylabel('Y')
+            axs[0].legend()
+
+            plot = False
+        r2_test_value_fold.append(r2_test)
+        r2_train_value_fold.append(r2_train)
+
+    r2_values_test_all.append(r2_test_value_fold)
+    r2_values_train_all.append(r2_train_value_fold)
+
+for i in range(len(folds)):
+    axs[1].scatter(alpha_values, r2_values_test_all[i], label=f'{folds[i]} folds test')
+    axs[1].plot(alpha_values, r2_values_train_all[i], label=f'{folds[i]} folds train')
+
+    
+axs[1].set_title('R^2 vs Alpha on linear toy dataset - works as expected')
+
+axs[1].set_xscale('log')
+axs[1].set_xlabel('Alpha')
+axs[1].set_ylabel('R^2')
+
+
+axs[1].legend()
+plt.show()
+
+
+# %%
 kin_slice, rates_slice = return_all_nonNan_slice('ankle_x', use_smooth_data=False)
 vel = diff_filter(kin_slice)
-vel_slice = vel[11000:14000]
-plt.plot(vel_slice)
-plt.title('Kinematic Data')
-plt.xlabel('Time (bins)')
-plt.ylabel('Ankle X')
-# make x ticks every 500
-plt.xticks(np.arange(0, vel_slice.shape[0], 500))
+vel = vel[9650:9650+600]
+rates_slice = rates_slice[9650:9650+600] 
+
+# plot rates slice using pcolor
+fig, ax = plt.subplots(1, 2, figsize=(10, 4))
+c = ax[0].pcolor(rates_slice.T, cmap='viridis')
+ax[0].set_title('Rates Slice')
+ax[0].set_xlabel('Time (bins)')
+ax[0].set_ylabel('Channels')
+fig.colorbar(c, ax=ax, label='Firing Rate')
+
+# plot vel
+
+ax[1].plot(vel)
+ax[1].set_title('Velocity')
+ax[1].set_xlabel('Time (bins)')
+ax[1].set_ylabel('Velocity')
+plt.show()
+
 
 # %%
