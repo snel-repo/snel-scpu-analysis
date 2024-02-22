@@ -48,6 +48,7 @@ dataset, bin_size = load_dataset_and_binsize(yaml_config_path)
 # %% 
 # Smooth kinematic data and factors
 dataset.smooth_spk(signal_type='kin_pos', gauss_width=3, name='smooth_3', overwrite=False)
+dataset.smooth_spk(signal_type='spikes', gauss_width=100, name='smooth_100', overwrite=False)
 # dataset.smooth_spk(signal_type='lfads_factors', gauss_width=8, name='smooth_8', overwrite=False)
 # dataset.data.lfads_factors_smooth_8 = dataset.data.lfads_factors_smooth_8.fillna(0)
 
@@ -102,7 +103,7 @@ def return_all_nonNan_slice(column_name: str, use_smooth_data: bool = True) -> t
     
     if use_smooth_data:
         all_kin_data = dataset.data.kin_pos_smooth_3
-        all_rates_data = dataset.data.lfads_rates_smooth_8
+        all_rates_data = dataset.data.spikes_smooth_100
         
     else:
         all_kin_data = dataset.data.kin_pos
@@ -129,14 +130,14 @@ def linear_regression_train_val(x, y, alpha=0, folds=5):
 
     kf = KFold(n_splits=folds, shuffle=True, random_state=42)
     lr = Ridge(alpha=alpha)
-    
-    r2_test = 0
-    r2_train = 0
+
+    r2_test = np.zeros(folds)
+    r2_train = np.zeros(folds)
     fold_mean_x = [] # for test data
     fold_mean_y = [] # for test data
     test_pred = np.zeros_like(y)
 
-    for train_ix, test_ix in kf.split(x):
+    for split_num, (train_ix, test_ix) in enumerate(kf.split(x)):
         x_train, x_test = x[train_ix, :], x[test_ix, :]
         y_train, y_test = y[train_ix], y[test_ix]
 
@@ -144,15 +145,20 @@ def linear_regression_train_val(x, y, alpha=0, folds=5):
         lr.fit(x_train, y_train)
         test_pred[test_ix] = lr.predict(x_test)
         train_pred = lr.predict(x_train)
-        r2_test += r2_score(y_test, test_pred[test_ix])
-        r2_train += r2_score(y_train, train_pred)
+        r2_test[split_num] = r2_score(y_test, test_pred[test_ix])
+        r2_train[split_num] = r2_score(y_train, train_pred)
+        
         fold_mean_x.append(np.mean(x_test,axis=0))
         fold_mean_y.append(np.mean(y_test))
-    r2_test /= folds
-    r2_train /= folds
+    
+    test_sem = np.std(r2_test) / np.sqrt(folds)
+    train_sem = np.std(r2_train) / np.sqrt(folds)
  
+    r2_test = np.mean(r2_test)
+    r2_train = np.mean(r2_train)
 
-    return test_pred, r2_test, r2_train
+
+    return test_pred, r2_test, r2_train, train_sem, test_sem
 
 
 # %% 
@@ -178,13 +184,14 @@ def column_name_to_predict_and_r2(column_name:str, start_idx: List[int], stop_id
 
 
     kin_slice, rates_slice = return_all_nonNan_slice(column_name, use_smooth_data=use_smooth_data)
-    vel = diff_filter(kin_slice)
+    regression_vel_slice = diff_filter(kin_slice)
     regression_rates_slice = np.log(rates_slice + 1e-10)
 
     # slice vel and rates_slice to exclude handpicked_outliers
 
-    regression_vel_slice = concat_data_given_start_stop_indices(vel, start_idx, stop_idx)
-    regression_rates_slice = concat_data_given_start_stop_indices(regression_rates_slice, start_idx, stop_idx)
+    if len(start_idx) >= 1 and len(stop_idx) >= 1 : # if start and stop indices are provided
+        regression_vel_slice = concat_data_given_start_stop_indices(regression_vel_slice, start_idx, stop_idx)
+        regression_rates_slice = concat_data_given_start_stop_indices(regression_rates_slice, start_idx, stop_idx)
 
     # # plot rates slice using pcolor
     # fig, ax = plt.subplots(1, 1, figsize=(10, 12))
@@ -211,149 +218,114 @@ def column_name_to_predict_and_r2(column_name:str, start_idx: List[int], stop_id
     # Predict kinematic data from lfads rates
     #predicted_vel, _, r2_sklearn = cross_pred(regression_rates_slice, regression_vel_slice, alpha=alpha, kfolds=10)
 
-    pred_vel, r2_test, r2_train = linear_regression_train_val(regression_rates_slice, regression_vel_slice, alpha=alpha, folds=folds)
-    return pred_vel, regression_vel_slice, r2_test, r2_train
+    pred_vel, r2_test, r2_train, train_sem, test_sem = linear_regression_train_val(regression_rates_slice, regression_vel_slice, alpha=alpha, folds=folds)
+    return pred_vel, regression_vel_slice, r2_test, r2_train, train_sem, test_sem
 
 
 # %%
-fig, axs = plt.subplots(4, 2, figsize=(10, 12))
-fig.suptitle('Kinematic Data')
+use_smooth_data = True
 
-big_ax = fig.add_subplot(111, frameon=False)
-# Hide tick and tick label of the big subplot
-big_ax.tick_params(labelcolor='none', top=False, bottom=False, left=False, right=False)
-big_ax.grid(False)
+# fig, axs = plt.subplots(3, 2, figsize=(10, 12))
+# fig.suptitle(f'Kinematic Data vs Predicted Kinematic Data for different alphas and folds. Smoothed: {use_smooth_data}')
 
-# Set the labels
-big_ax.set_xlabel('Time (bins)', labelpad=5)
-big_ax.set_ylabel('Velocity', labelpad=0)
+# big_ax = fig.add_subplot(111, frameon=False)
+# # Hide tick and tick label of the big subplot
+# big_ax.tick_params(labelcolor='none', top=False, bottom=False, left=False, right=False)
+# big_ax.grid(False)
+
+# # Set the labels
+# big_ax.set_xlabel('Time (bins)', labelpad=5)
+# big_ax.set_ylabel('Velocity', labelpad=0)
 
 
-ax = axs.flatten()
+# ax = axs.flatten()
 #alpha_values = [1e-10, 1e-9, 1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1, 10, 100, 1000, 10000]
-alpha_values = [1e-10, 1e-6, 1e-2, 1e-1, 1, 3, 10, 100]
+alpha_values = np.logspace(-7, 1, num=10)
 
 best_alpha = None
 best_r2 = -np.inf
 r2_values_test_all = [] 
 r2_values_train_all = []
-folds = [10]
-
-for fold in folds:
-    r2_test_value_fold = []
-    r2_train_value_fold = []
-    for i, alpha in enumerate(alpha_values):
-
-        for idx, column_name in enumerate(dataset.data.kin_pos.columns):
-            if idx > 0:
-                break
-            predicted_vel, vel, r2_test, r2_train = column_name_to_predict_and_r2(column_name, start_idx=[9650], stop_idx=[9650+600], alpha=alpha, use_smooth_data=True, folds=fold)
-            r2_test_value_fold.append(r2_test)
-            r2_train_value_fold.append(r2_train)
-            
-            ax[i].plot(vel, label='True')
-            ax[i].plot(predicted_vel, label='Predicted')
-            title = f"r^2 test: {round(r2_test, 3)} r^2 train: {round(r2_train, 3)}, alpha: {alpha}, folds: {fold}"
-
-            ax[i].set_title(title)
-            ax[i].set_xlabel('Time (bins)')
-            ax[i].set_ylabel('Velocity')
-            ax[i].legend()
-            ax[i].spines['right'].set_visible(False)
-            ax[i].spines['top'].set_visible(False)
-
-    fig.subplots_adjust(hspace=0.5)
-    fig.subplots_adjust(wspace=0.5)
-    plt.show()
-    r2_values_test_all.append(r2_test_value_fold)
-    r2_values_train_all.append(r2_train_value_fold)
+train_sem_all = [] 
+test_sem_all = [] 
+fold = 10
+r2_test_value_fold = []
+r2_train_value_fold = []
 
 
-# %% 
-for i in range(len(folds)):
-    plt.plot(alpha_values, r2_values_test_all[i], label=f'{folds[i]} folds test')
-    plt.plot(alpha_values, r2_values_train_all[i], label=f'{folds[i]} folds train')
+for i, alpha in enumerate(alpha_values):
 
-plt.xlabel('Alpha')
-plt.ylabel('R^2')
-plt.title('R^2 vs Alpha')
-
-plt.xscale('log')
-plt.xlabel('Alpha')
-plt.ylabel('R^2')
-
-
-plt.legend()
-plt.show()
-
-# %%
-# Toy dataset 
-from sklearn.datasets import make_regression
-X, y = make_regression(n_samples=600, n_features=1, noise=0.5)
-folds = [1,5,10,20]
-r2_values_test_all = []
-r2_values_train_all = []
-alpha_values = [1e-10, 1e-2, 1, 10, 100]
-plot = True
-fig, axs = plt.subplots(1, 2, figsize=(10, 4))
-for fold in folds:
-    r2_test_value_fold = []
-    r2_train_value_fold = []
-    for alpha in alpha_values:
-
-        pred, r2_test, r2_train = linear_regression_train_val(X, y, alpha=alpha, folds=fold)
-        if plot and fold == 10 and alpha == 1e-2:
-            axs[0].plot(X, y, label='True')
-            axs[0].plot(X, pred, label='Predicted')
-            axs[0].set_title(f'Predicted vs True.')
-            axs[0].set_xlabel('X')
-            axs[0].set_ylabel('Y')
-            axs[0].legend()
-
-            plot = False
+    for idx, column_name in enumerate(dataset.data.kin_pos.columns):
+        if idx > 0:
+            break
+        predicted_vel, vel, r2_test, r2_train, train_sem, test_sem = column_name_to_predict_and_r2(column_name, start_idx=[9650], stop_idx=[9650+600], alpha=alpha, use_smooth_data=use_smooth_data, folds=fold)
         r2_test_value_fold.append(r2_test)
         r2_train_value_fold.append(r2_train)
+        train_sem_all.append(train_sem)
+        test_sem_all.append(test_sem)
+        
+        # ax[i].plot(vel, label='True')
+        # ax[i].plot(predicted_vel, label='Predicted (Test)')
+        # title = f"r^2 test: {round(r2_test, 3)} r^2 train: {round(r2_train, 3)}, alpha: {alpha}, folds: {fold}"
 
-    r2_values_test_all.append(r2_test_value_fold)
-    r2_values_train_all.append(r2_train_value_fold)
+        # ax[i].set_title(title)
+        # ax[i].set_xlabel('Time (bins)')
+        # ax[i].set_ylabel('Velocity')
+        # ax[i].legend()
+        # ax[i].spines['right'].set_visible(False)
+        # ax[i].spines['top'].set_visible(False)
 
-for i in range(len(folds)):
-    axs[1].scatter(alpha_values, r2_values_test_all[i], label=f'{folds[i]} folds test')
-    axs[1].plot(alpha_values, r2_values_train_all[i], label=f'{folds[i]} folds train')
+        if r2_test > best_r2:
+            best_r2 = r2_test
+            best_alpha = alpha
+            best_pred = predicted_vel
+            best_true = vel
+            best_test_sem = test_sem
+            best_train_sem = train_sem
 
-    
-axs[1].set_title('R^2 vs Alpha on linear toy dataset - works as expected')
-
-axs[1].set_xscale('log')
-axs[1].set_xlabel('Alpha')
-axs[1].set_ylabel('R^2')
-
-
-axs[1].legend()
-plt.show()
+    # fig.subplots_adjust(hspace=0.5)
+    # fig.subplots_adjust(wspace=0.5)
+    # plt.show()
 
 
 # %%
-kin_slice, rates_slice = return_all_nonNan_slice('ankle_x', use_smooth_data=False)
-vel = diff_filter(kin_slice)
-vel = vel[9650:9650+600]
-rates_slice = rates_slice[9650:9650+600] 
-
-# plot rates slice using pcolor
+    
+# plot best alpha
 fig, ax = plt.subplots(1, 2, figsize=(10, 4))
-c = ax[0].pcolor(rates_slice.T, cmap='viridis')
-ax[0].set_title('Rates Slice')
+fig.suptitle("Smoothed spikes, Gaussian kernel: 100")
+ax[0].plot(best_true, label='True')
+ax[0].plot(best_pred, label='Predicted')
+ax[0].set_title(f'Predicted vs True. Best Alpha: {round(best_alpha, 3)} $R^2$: {round(best_r2, 3)}')
 ax[0].set_xlabel('Time (bins)')
-ax[0].set_ylabel('Channels')
-fig.colorbar(c, ax=ax, label='Firing Rate')
+ax[0].set_ylabel('Velocity')
+ax[0].spines['right'].set_visible(False)
+ax[0].spines['top'].set_visible(False)
 
-# plot vel
+ax[0].legend()
 
-ax[1].plot(vel)
-ax[1].set_title('Velocity')
-ax[1].set_xlabel('Time (bins)')
-ax[1].set_ylabel('Velocity')
+
+
+r2_test_value_fold = np.array(r2_test_value_fold)
+r2_train_value_fold = np.array(r2_train_value_fold)
+train_sem_all = np.array(train_sem_all)
+test_sem_all = np.array(test_sem_all)
+
+
+ax[1].plot(alpha_values, r2_test_value_fold, '-o', label=f'10 folds validation')
+ax[1].fill_between(alpha_values, r2_test_value_fold - train_sem_all, r2_test_value_fold + train_sem_all, alpha=0.5)
+
+ax[1].plot(alpha_values, r2_train_value_fold, '-o',label=f'10 folds train')
+ax[1].fill_between(alpha_values, r2_train_value_fold - test_sem_all, r2_train_value_fold + test_sem_all, alpha=0.1)
+
+ax[1].set_xlabel('Alpha')
+ax[1].set_ylabel('$R^2$')
+ax[1].set_title('$R^2$ vs Alpha')
+
+ax[1].set_xscale('log')
+
+
+
+ax[1].legend()
 plt.show()
-
 
 # %%
