@@ -39,16 +39,33 @@ import matplotlib.colors as colors
 
 # %%
 # Load everything
-yaml_config_path = "../configs/lfads_dataset_cfg.yaml"
-path_config, ld_cfg, merge_config = load_cfgs(yaml_config_path)
 
-dataset, bin_size = load_dataset_and_binsize(yaml_config_path)
-# dataset has kinematic data, smoothed spikes, and smoothed lfads_factors
+# we use smoothed kinematic data for decoding so we don't have to smooth it every time
+load_smooth_kin_data = True
+
+path_config, ld_cfg, merge_config = load_cfgs(yaml_config_path)
+smooth_kin_data_path = "/snel/share/share/derived/scpu_snel/nwb_lfads/runs/binsize_2/NG_smooth_kin_data.pkl"
+yaml_config_path = "../configs/lfads_dataset_cfg.yaml"
+
+if load_smooth_kin_data:
+    with open(smooth_kin_data_path,'rb') as inf:
+        dataset = pkl.load(inf)
+        bin_size = dataset.bin_size
+
+        
+else:
+
+    dataset, bin_size = load_dataset_and_binsize(yaml_config_path)
+    dataset.smooth_spk(signal_type='kin_pos', gauss_width=3, name='smooth_3', overwrite=False)
+    with open(smooth_kin_data_path, "wb") as f:
+        dill.dump(dataset, f, protocol=dill.HIGHEST_PROTOCOL, recurse=True)
+
+    # dataset has kinematic data, smoothed spikes, and smoothed lfads_factors
 
 # %% 
-# Smooth kinematic data and factors
-dataset.smooth_spk(signal_type='kin_pos', gauss_width=3, name='smooth_3', overwrite=False)
-dataset.smooth_spk(signal_type='spikes', gauss_width=100, name='smooth_100', overwrite=False)
+#dataset.smooth_spk(signal_type='kin_pos', gauss_width=20, name='smooth_20', overwrite=False)
+
+#dataset.smooth_spk(signal_type='spikes', gauss_width=100, name='smooth_100', overwrite=False)
 # dataset.smooth_spk(signal_type='lfads_factors', gauss_width=8, name='smooth_8', overwrite=False)
 # dataset.data.lfads_factors_smooth_8 = dataset.data.lfads_factors_smooth_8.fillna(0)
 
@@ -102,8 +119,8 @@ def return_all_nonNan_slice(column_name: str, use_smooth_data: bool = True) -> t
     
     
     if use_smooth_data:
-        all_kin_data = dataset.data.kin_pos_smooth_3
-        all_rates_data = dataset.data.spikes_smooth_100
+        all_kin_data = dataset.data.kin_pos_smooth_20
+        all_rates_data = dataset.data.lfads_rates_smooth_8
         
     else:
         all_kin_data = dataset.data.kin_pos
@@ -175,55 +192,78 @@ def concat_data_given_start_stop_indices(dataset, start_idx, stop_idx):
     concatenated_data = np.concatenate(data_slices, axis=0)
     
     return concatenated_data
-# %%
-"""
-Takes column name and returns predicted kinematic data, true kinematic data, and r2 score
-"""
 
-def column_name_to_predict_and_r2(column_name:str, start_idx: List[int], stop_idx: List[int], alpha, folds: int, use_smooth_data: bool = False):
+def plot_vel_reg(regression_vel_slice, regression_rates_slice):
+    """
+    Plots velocity and rates (input to linear regression model)
+    """
+    fig, ax = plt.subplots(1, 2, figsize=(10, 4))
+    ax[0].plot(regression_vel_slice)
+    ax[0].set_title('Velocity')
+    ax[0].set_xlabel('Time (bins)')
+    ax[0].set_ylabel('Velocity')
 
+    ax[1].plot(regression_rates_slice)
+    ax[1].set_title('Rates')
+    ax[1].set_xlabel('Time (bins)')
+    ax[1].set_ylabel('Rates')
+    plt.show()
 
+def plot_psd_kinematic_data(kin_slice):
+    """
+    Plots power spectral density of kinematic data
+    """
+    fig, ax = plt.subplots(1, 1, figsize=(10, 4))
+    f, Pxx_den = signal.welch(kin_slice, 1/bin_size, nperseg=1024)
+    ax.semilogy(f, Pxx_den)
+    ax.set_title('PSD: kinematic data')
+    ax.set_xlabel('frequency [Hz]')
+    ax.set_ylabel('PSD [V**2/Hz]')
+    plt.show()
+
+def preprocessing(column_name, use_smooth_data, start_idx, stop_idx, plot=False):
+    """
+        preprocessing steps. output will be used for linear regression
+    """
+    # PREPROCESSING
     kin_slice, rates_slice = return_all_nonNan_slice(column_name, use_smooth_data=use_smooth_data)
     regression_vel_slice = diff_filter(kin_slice)
     regression_rates_slice = np.log(rates_slice + 1e-10)
 
-    # slice vel and rates_slice to exclude handpicked_outliers
+
 
     if len(start_idx) >= 1 and len(stop_idx) >= 1 : # if start and stop indices are provided
         regression_vel_slice = concat_data_given_start_stop_indices(regression_vel_slice, start_idx, stop_idx)
         regression_rates_slice = concat_data_given_start_stop_indices(regression_rates_slice, start_idx, stop_idx)
 
-    # # plot rates slice using pcolor
-    # fig, ax = plt.subplots(1, 1, figsize=(10, 12))
-    # c = ax.pcolor(regression_rates_slice.T, cmap='viridis')
-    # ax.set_title('Rates Slice')
-    # ax.set_xlabel('Time (bins)')
-    # ax.set_ylabel('Channels')
-    # fig.colorbar(c, ax=ax, label='Firing Rate')
-    # plt.show()
 
-
-    #determine outliers of velocity   
-    outlier_min = np.argmin(regression_vel_slice)
-    outlier_max = np.argmax(regression_vel_slice)
-    regression_vel_slice = np.delete(regression_vel_slice, [outlier_min, outlier_max])
-    regression_rates_slice = np.delete(regression_rates_slice, [outlier_min, outlier_max], axis=0)
-
-    var = np.var(regression_rates_slice, axis=0)
-    large_variance_channels = np.where(var > 5)
-    regression_rates_slice = np.delete(regression_rates_slice, large_variance_channels, axis=1) # remove channels with large variance
-
-    # remove outliers
+    index_smallest_10 = np.argpartition(regression_vel_slice, 10)[:10]
+    index_largest_10 = np.argpartition(regression_vel_slice, -10)[-10:]
+    outlier_indices = np.concatenate((index_smallest_10, index_largest_10))
     
-    # Predict kinematic data from lfads rates
-    #predicted_vel, _, r2_sklearn = cross_pred(regression_rates_slice, regression_vel_slice, alpha=alpha, kfolds=10)
+    # outlier_min = np.argmin(regression_vel_slice)
+    # val_min = regression_vel_slice[outlier_min]
+    # print(val_min)
+    # outlier_max = np.argmax(regression_vel_slice)
+    regression_vel_slice = np.delete(regression_vel_slice, outlier_indices)
+    regression_rates_slice = np.delete(regression_rates_slice, outlier_indices, axis=0)
 
-    pred_vel, r2_test, r2_train, train_sem, test_sem = linear_regression_train_val(regression_rates_slice, regression_vel_slice, alpha=alpha, folds=folds)
-    return pred_vel, regression_vel_slice, r2_test, r2_train, train_sem, test_sem
+    # apply wiener filter
+    # m = 20
+    # regression_vel_slice = np.convolve(regression_vel_slice, np.ones((m,))/m, mode='same')
+
+    # delete channels with large variance
+    # var = np.var(regression_rates_slice, axis=0)
+    # large_variance_channels = np.where(var > 5)
+    # regression_rates_slice = np.delete(regression_rates_slice, large_variance_channels, axis=1) # remove channels with large variance
+    if plot:
+        plot_vel_reg(regression_vel_slice, regression_rates_slice)
+        plot_psd_kinematic_data(regression_vel_slice)
+    return regression_vel_slice, regression_rates_slice
 
 
 # %%
-use_smooth_data = True
+use_smooth_data = False
 
 # fig, axs = plt.subplots(3, 2, figsize=(10, 12))
 # fig.suptitle(f'Kinematic Data vs Predicted Kinematic Data for different alphas and folds. Smoothed: {use_smooth_data}')
@@ -240,7 +280,7 @@ use_smooth_data = True
 
 # ax = axs.flatten()
 #alpha_values = [1e-10, 1e-9, 1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1, 10, 100, 1000, 10000]
-alpha_values = np.logspace(-7, 1, num=10)
+alpha_values = np.logspace(-7, 3, num=7)
 
 best_alpha = None
 best_r2 = -np.inf
@@ -252,13 +292,17 @@ fold = 10
 r2_test_value_fold = []
 r2_train_value_fold = []
 
+for idx, column_name in enumerate(dataset.data.kin_pos.columns):
+    if idx > 0:
+        # only decode one column for now
+        break
+    regression_vel_slice, regression_rates_slice = preprocessing(column_name, use_smooth_data, start_idx=[9650], stop_idx=[9650+600], plot=True)
 
-for i, alpha in enumerate(alpha_values):
+    for i, alpha in enumerate(alpha_values):
+        print(f'Alpha: {alpha}')
 
-    for idx, column_name in enumerate(dataset.data.kin_pos.columns):
-        if idx > 0:
-            break
-        predicted_vel, vel, r2_test, r2_train, train_sem, test_sem = column_name_to_predict_and_r2(column_name, start_idx=[9650], stop_idx=[9650+600], alpha=alpha, use_smooth_data=use_smooth_data, folds=fold)
+        # 9650 start index, 9650+600 stop index was best for 
+        predicted_vel, r2_test, r2_train, train_sem, test_sem = linear_regression_train_val(regression_rates_slice, regression_vel_slice, alpha=alpha, folds=fold)
         r2_test_value_fold.append(r2_test)
         r2_train_value_fold.append(r2_train)
         train_sem_all.append(train_sem)
@@ -279,7 +323,7 @@ for i, alpha in enumerate(alpha_values):
             best_r2 = r2_test
             best_alpha = alpha
             best_pred = predicted_vel
-            best_true = vel
+            best_true = regression_vel_slice
             best_test_sem = test_sem
             best_train_sem = train_sem
 
@@ -292,7 +336,7 @@ for i, alpha in enumerate(alpha_values):
     
 # plot best alpha
 fig, ax = plt.subplots(1, 2, figsize=(10, 4))
-fig.suptitle("Smoothed spikes, Gaussian kernel: 100")
+fig.suptitle("LFADS Rates")
 ax[0].plot(best_true, label='True')
 ax[0].plot(best_pred, label='Predicted')
 ax[0].set_title(f'Predicted vs True. Best Alpha: {round(best_alpha, 3)} $R^2$: {round(best_r2, 3)}')
@@ -328,4 +372,14 @@ ax[1].set_xscale('log')
 ax[1].legend()
 plt.show()
 
+# %%
+column_name = 'ankle_x'
+kin_slice, rates_slice = return_all_nonNan_slice(column_name, use_smooth_data=use_smooth_data)
+regression_vel_slice = diff_filter(kin_slice)
+regression_rates_slice = np.log(rates_slice + 1e-10)
+
+smallest_5 = np.partition(regression_vel_slice, 10)[:10]
+index_smallest_5 = np.argpartition(regression_vel_slice, 5)[:10]
+print(smallest_5)
+print(index_smallest_5)
 # %%
