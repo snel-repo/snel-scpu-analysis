@@ -13,26 +13,17 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.cm as colormap
 from snel_toolkit.datasets.nwb import NWBDataset
-import logging
-import sys
-import yaml
+
 import dill
 from analysis_utils import *
 import scipy.signal as signal
-# decoding imports
-from snel_toolkit.decoding import prepare_decoding_data
-from snel_toolkit.decoding import NeuralDecoder
+
 from sklearn.linear_model import Ridge
 import typing
 from typing import List
 from sklearn.model_selection import KFold, cross_val_score, GridSearchCV
 from sklearn.linear_model import Ridge
 from sklearn.metrics import r2_score
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler
-from sklearn.model_selection import TimeSeriesSplit
-import matplotlib.cm as cm
-import matplotlib.colors as colors
 
 
 
@@ -64,7 +55,11 @@ else:
 
 # %% 
 #dataset.smooth_spk(signal_type='kin_pos', gauss_width=20, name='smooth_20', overwrite=False)
-
+gauss_width_ms = 10
+gauss_width_s = gauss_width_ms/1000
+# cutoff frequency using -3db cutoff
+cutoff_freq = (2 * np.sqrt(2 * np.log(2))) / (gauss_width_s*(np.sqrt(np.pi)))
+print(f'Cutoff frequency: {cutoff_freq} Hz')
 #dataset.smooth_spk(signal_type='spikes', gauss_width=100, name='smooth_100', overwrite=False)
 # dataset.smooth_spk(signal_type='lfads_factors', gauss_width=8, name='smooth_8', overwrite=False)
 # dataset.data.lfads_factors_smooth_8 = dataset.data.lfads_factors_smooth_8.fillna(0)
@@ -193,7 +188,7 @@ def concat_data_given_start_stop_indices(dataset, start_idx, stop_idx):
     
     return concatenated_data
 
-def plot_vel_reg(regression_vel_slice, regression_rates_slice):
+def plot_rates_vel_reg(regression_vel_slice, regression_rates_slice):
     """
     Plots velocity and rates (input to linear regression model)
     """
@@ -202,21 +197,25 @@ def plot_vel_reg(regression_vel_slice, regression_rates_slice):
     ax[0].set_title('Velocity')
     ax[0].set_xlabel('Time (bins)')
     ax[0].set_ylabel('Velocity')
-
-    ax[1].plot(regression_rates_slice)
+    vmax = np.max(regression_rates_slice)
+    print(vmax)
+    c = ax[1].pcolor(regression_rates_slice.T, cmap='viridis', vmin=0, vmax=vmax)
     ax[1].set_title('Rates')
     ax[1].set_xlabel('Time (bins)')
     ax[1].set_ylabel('Rates')
+    plt.colorbar(c)
     plt.show()
 
-def plot_psd_kinematic_data(kin_slice):
+def plot_psd_kinematic_data(kin_slice, use_smooth_data, bin_size=2):
     """
     Plots power spectral density of kinematic data
     """
     fig, ax = plt.subplots(1, 1, figsize=(10, 4))
-    f, Pxx_den = signal.welch(kin_slice, 1/bin_size, nperseg=1024)
+    fs = 1/(bin_size/1000) # sampling frequency in Hz
+    f, Pxx_den = signal.welch(kin_slice, fs, nperseg=1024)
     ax.semilogy(f, Pxx_den)
-    ax.set_title('PSD: kinematic data')
+    title = f'PSD: kinematic data Smooth: cutoff: {cutoff_freq}' if use_smooth_data else f'PSD: kinematic data'
+    ax.set_title(title)
     ax.set_xlabel('frequency [Hz]')
     ax.set_ylabel('PSD [V**2/Hz]')
     plt.show()
@@ -228,8 +227,8 @@ def preprocessing(column_name, use_smooth_data, start_idx, stop_idx, plot=False)
     # PREPROCESSING
     kin_slice, rates_slice = return_all_nonNan_slice(column_name, use_smooth_data=use_smooth_data)
     regression_vel_slice = diff_filter(kin_slice)
-    regression_rates_slice = np.log(rates_slice + 1e-10)
-
+    # regression_rates_slice = np.log(rates_slice + 1e-10)
+    regression_rates_slice = rates_slice
 
 
     if len(start_idx) >= 1 and len(stop_idx) >= 1 : # if start and stop indices are provided
@@ -257,8 +256,8 @@ def preprocessing(column_name, use_smooth_data, start_idx, stop_idx, plot=False)
     # large_variance_channels = np.where(var > 5)
     # regression_rates_slice = np.delete(regression_rates_slice, large_variance_channels, axis=1) # remove channels with large variance
     if plot:
-        plot_vel_reg(regression_vel_slice, regression_rates_slice)
-        plot_psd_kinematic_data(regression_vel_slice)
+        plot_rates_vel_reg(regression_vel_slice, regression_rates_slice)
+        plot_psd_kinematic_data(regression_vel_slice, use_smooth_data, bin_size=2)
     return regression_vel_slice, regression_rates_slice
 
 
