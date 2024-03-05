@@ -62,7 +62,7 @@ cutoff_freq = (2 * np.sqrt(2 * np.log(2))) / (gauss_width_s*(np.sqrt(np.pi)))
 print(f'Cutoff frequency: {cutoff_freq} Hz')
 # %%
 #dataset.smooth_spk(signal_type='lfads_rates', gauss_width=gauss_width_ms, name=f'smooth_{gauss_width_ms}', overwrite=False)
-dataset.smooth_spk(signal_type='spikes', gauss_width=gauss_width_ms, name='smooth_100', overwrite=False)
+#dataset.smooth_spk(signal_type='spikes', gauss_width=gauss_width_ms, name='smooth_25', overwrite=False)
 # dataset.smooth_spk(signal_type='lfads_factors', gauss_width=8, name='smooth_8', overwrite=False)
 # dataset.data.lfads_factors_smooth_8 = dataset.data.lfads_factors_smooth_8.fillna(0)
 
@@ -111,17 +111,24 @@ def concatenate_trials(df: pd.DataFrame, trials: typing.List[typing.Tuple[int, i
 Returns all nonNan data of kinematic data for a given column name and returns lfads rates based on those indices
 
 """
-def return_all_nonNan_slice(column_name: str, use_smooth_data: bool = True) -> typing.Tuple[np.ndarray, np.ndarray]:
+def return_all_nonNan_slice(column_name: str, use_smooth_data: bool = True, use_LFADS: bool = True) -> typing.Tuple[np.ndarray, np.ndarray]:
 
     
     
     if use_smooth_data:
         all_kin_data = dataset.data.kin_pos_smooth_3
-        all_rates_data = dataset.data.spikes_smooth_100 # smoothing LFADS rates makes R^2 improve the most compared to smoothing kinematic data
+        if use_LFADS:
+            all_rates_data = dataset.data.lfads_rates_smooth_8
+        else:
+            all_rates_data = dataset.data.spikes_smooth_25 # smoothing LFADS rates makes R^2 improve the most compared to smoothing kinematic data
         #all_rates_data = dataset.data.lfads_rates_smooth_50
     else:
         all_kin_data = dataset.data.kin_pos
-        all_rates_data = dataset.data.lfads_rates
+        if use_LFADS:
+            all_rates_data = dataset.data.lfads_rates
+        else:
+            all_rates_data = dataset.data.spikes_smooth_25
+
         #all_rates_data = dataset.data.spikes_smooth_100
     change_indices = get_change_indices(all_kin_data[column_name])
     kin_slice = concatenate_trials(all_kin_data[column_name], change_indices)
@@ -195,8 +202,11 @@ def plot_rates_vel_reg(regression_vel_slice, regression_rates_slice, start_idx, 
     """
     Plots velocity and rates (input to linear regression model)
     """
-    fig, ax = plt.subplots(1, 2, figsize=(10, 4))
+    fig, ax = plt.subplots(2, 1, figsize=(6, 10))
+    
     fig.suptitle(f'Velocity and Rates indices {start_idx, stop_idx}')
+    fig.subplots_adjust(hspace=0.25)
+
     ax[0].plot(regression_vel_slice)
     ax[0].set_title('Velocity')
     ax[0].set_xlabel('Time (bins)')
@@ -213,7 +223,7 @@ def plot_psd_kinematic_data(kin_slice, use_smooth_data, bin_size=2):
     """
     Plots power spectral density of kinematic data
     """
-    fig, ax = plt.subplots(1, 1, figsize=(10, 4))
+    fig, ax = plt.subplots(1, 1, figsize=(8, 4))
     fs = 1/(bin_size/1000) # sampling frequency in Hz
     f, Pxx_den = signal.welch(kin_slice, fs, nperseg=256)
     ax.semilogy(f, Pxx_den)
@@ -223,12 +233,12 @@ def plot_psd_kinematic_data(kin_slice, use_smooth_data, bin_size=2):
     ax.set_ylabel('PSD [V**2/Hz]')
     plt.show()
 
-def preprocessing(column_name, use_smooth_data, start_idx, stop_idx, plot=False):
+def preprocessing(column_name, use_smooth_data, start_idx, stop_idx, plot=False, use_LFADS=True):
     """
         preprocessing steps. output will be used for linear regression
     """
     # PREPROCESSING
-    kin_slice, rates_slice = return_all_nonNan_slice(column_name, use_smooth_data=use_smooth_data)
+    kin_slice, rates_slice = return_all_nonNan_slice(column_name, use_smooth_data=use_smooth_data, use_LFADS=use_LFADS)
     regression_vel_slice = diff_filter(kin_slice)
     regression_rates_slice = np.log(rates_slice + 1e-10)
 
@@ -263,9 +273,70 @@ def preprocessing(column_name, use_smooth_data, start_idx, stop_idx, plot=False)
         plot_psd_kinematic_data(regression_vel_slice, use_smooth_data, bin_size=2)
     return regression_vel_slice, regression_rates_slice
 
+# %%
+vel_slice, rates_slice = preprocessing('ankle_x', use_smooth_data=True, start_idx=[22000], stop_idx=[26000], plot=True, use_LFADS=True)
+# %%
+# Plot kinematic data and rates for all indices
+start_idx = [22000]
+stop_idx = [26000]
+kin_slice_ankle_x, rates_slice = return_all_nonNan_slice('ankle_x', use_smooth_data=False, use_LFADS=True)
+kin_slice_ankle_y, _ = return_all_nonNan_slice('ankle_y', use_smooth_data=False, use_LFADS=True)
+kin_slice_knee_x, _ = return_all_nonNan_slice('knee_x', use_smooth_data=False, use_LFADS=True)
+kin_slice_knee_y, _ = return_all_nonNan_slice('knee_y', use_smooth_data=False, use_LFADS=True)
+
+kin_slice_ankle_x = concat_data_given_start_stop_indices(kin_slice_ankle_x, start_idx, stop_idx)
+kin_slice_ankle_y = concat_data_given_start_stop_indices(kin_slice_ankle_y, start_idx, stop_idx)
+kin_slice_knee_x = concat_data_given_start_stop_indices(kin_slice_knee_x, start_idx, stop_idx)
+kin_slice_knee_y = concat_data_given_start_stop_indices(kin_slice_knee_y, start_idx, stop_idx)
+rates_slice = concat_data_given_start_stop_indices(rates_slice, start_idx, stop_idx)
+# reshape kinslice to be 2d
+kin_slice_ankle_x = kin_slice_ankle_x.reshape(-1, 1)
+kin_slice_ankle_y = kin_slice_ankle_y.reshape(-1, 1)
+kin_slice_knee_x = kin_slice_knee_x.reshape(-1, 1)
+kin_slice_knee_y = kin_slice_knee_y.reshape(-1, 1)
+all_kin_data_plot = np.concatenate([kin_slice_ankle_x, kin_slice_ankle_y, kin_slice_knee_x, kin_slice_knee_y], axis=1)
+
+# # normalize rates and all_kin_data_plot on axis 1
+# from sklearn.preprocessing import StandardScaler, MinMaxScaler
+
+# scaler1 = StandardScaler() 
+# scaler2 = StandardScaler()
+
+# all_kin_data_plot = scaler1.fit_transform(all_kin_data_plot)
+# rates_slice = scaler2.fit_transform(rates_slice)
+# import matplotlib.ticker as ticker
+
+
+fig, ax = plt.subplots(2, 1, figsize=(10, 8))
+fig.suptitle(f'Kinematic Data and Rates for indices: {start_idx, stop_idx} - no scaling')
+fig.subplots_adjust(hspace=0.25)
+# ax[0] is rates, ax[1] is kinematic data
+cax0 = ax[0].pcolor(rates_slice.T, cmap='viridis')
+fig.colorbar(cax0, ax=ax[0])
+ax[0].set_title('Rates')
+ax[0].set_xlabel('Time (bins)')
+ax[0].set_ylabel('Rates')
+assert rates_slice.shape[0] == all_kin_data_plot.shape[0]
+cax1 = ax[1].pcolor(all_kin_data_plot.T, cmap='viridis')
+fig.colorbar(cax1, ax=ax[1])
+ax[1].set_title('Position Data')
+ax[1].set_xlabel('Time (bins)')
+ax[1].set_ylabel('Position Data')
+
+yticks = [0, 1, 2, 3]
+yticklabels = ['ankle_x', 'ankle_y', 'knee_x', 'knee_y']
+
+# Set the y-ticks and labels
+ax[1].yaxis.set_major_locator(ticker.FixedLocator(yticks))
+ax[1].yaxis.set_major_formatter(ticker.FixedFormatter(yticklabels))
+
+ax[1].set_ylabel('Position Data')
+
+plt.show()
+
 
 # %%
-use_smooth_data = True
+use_smooth_data = False
 
 # fig, axs = plt.subplots(3, 2, figsize=(10, 12))
 # fig.suptitle(f'Kinematic Data vs Predicted Kinematic Data for different alphas and folds. Smoothed: {use_smooth_data}')
@@ -282,10 +353,9 @@ use_smooth_data = True
 
 # ax = axs.flatten()
 #alpha_values = [1e-10, 1e-9, 1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1, 10, 100, 1000, 10000]
-alpha_values = np.logspace(-5, 2, num=20)
+alpha_values = np.logspace(-5, 2, num=10)
 
-best_alpha = None
-best_r2 = -np.inf
+
 r2_values_test_all = [] 
 r2_values_train_all = []
 train_sem_all = [] 
@@ -294,7 +364,7 @@ fold = 10
 r2_test_value_fold = []
 r2_train_value_fold = []
 start_idx = [11000]
-stop_idx = [11000+1200]
+stop_idx = [11000+3000]
 # start_idx = [9650]
 # stop_idx = [9650+600]
 # by itself, 9650 start index, 9650+600 stop index  R^2 = 0.748
@@ -305,12 +375,14 @@ for idx, column_name in enumerate(dataset.data.kin_pos.columns):
     if idx > 0:
         # only decode one column for now
         break
-    regression_vel_slice, regression_rates_slice = preprocessing(column_name, use_smooth_data, start_idx=start_idx, stop_idx=stop_idx, plot=True)
-
+    regression_vel_slice, regression_rates_slice = preprocessing(column_name, use_smooth_data, start_idx=start_idx, stop_idx=stop_idx, plot=True, use_LFADS=True)
+    best_alpha = None
+    best_r2 = -np.inf
     for i, alpha in enumerate(alpha_values):
 
         
         predicted_vel, r2_test, r2_train, train_sem, test_sem = linear_regression_train_val(regression_rates_slice, regression_vel_slice, alpha=alpha, folds=fold)
+        print(r2_test)
         r2_test_value_fold.append(r2_test)
         r2_train_value_fold.append(r2_train)
         train_sem_all.append(train_sem)
@@ -399,12 +471,12 @@ plt.show()
 # ax.set_ylabel('Velocity')
 # plt.show()
 # %%
-# visualize how rates and velocity change as more samples are included
-from mpl_toolkits.mplot3d import Axes3D
+# visualize how R^2 between  as more samples are included
+#from mpl_toolkits.mplot3d import Axes3D
 from matplotlib import cm
 use_smooth_data = True
 start_idx = [11000]
-stop_indices = [[11000+400], [11000+600], [11000+800], [11000+1000]]
+stop_indices = [[11000+400], [11000+600], [11000+800], [11000+1000], [11000+1200], [11000+1400], [11000+1600], [11000+1800], [11000+2000]]
 mean_kin_for_stop_indices = []
 var_kin_for_stop_indices = []
 num_batches = len(stop_indices)
@@ -412,49 +484,87 @@ num_channels = regression_rates_slice.shape[1]
 mean_rates_for_stop_indices = np.zeros((num_batches, num_channels)) # mean of rates for each channel as more samples are included
 var_rates_for_stop_indices = np.zeros((num_batches, num_channels))  # variance of rates for each channel as more samples are included
 dataset_sizes = [stop_idx[0] - start_idx[0] for stop_idx in stop_indices]
-
-
-for i in range(len(stop_indices)):
-    stop_idx = stop_indices[i]
-    sample_size = dataset_sizes[i]
-    regression_vel_slice, regression_rates_slice = preprocessing(column_name, use_smooth_data, start_idx=start_idx, stop_idx=stop_idx, plot=False)
-    predicted_vel, r2_test, r2_train, train_sem, test_sem = linear_regression_train_val(regression_rates_slice, regression_vel_slice, alpha=1e-2, folds=fold)
-    print(f"sample size: {sample_size}, R^2: {r2_test}")
-
-    
-    mean_kin_for_stop_indices.append(np.mean(regression_vel_slice))
-    var_kin_for_stop_indices.append(np.var(regression_vel_slice))
-
-    # rates distribution statistics
-
-    mean_rates_for_stop_indices[i, :] = np.mean(regression_rates_slice, axis=0)
-    var_rates_for_stop_indices[i, :] = np.var(regression_rates_slice, axis=0)
+alpha_values = np.logspace(-5, 2, num=10)
+fold = 10
+column_name = 'ankle_x'
 
 
 
-# Flatten the sample sizes and channels to use in scatter plot
-x_indices = np.repeat(np.arange(num_batches), num_channels)
-y_indices = np.tile(np.arange(num_channels), num_batches)
+r2_across_dataset_sizes_smooth = []
+r2_across_dataset_sizes_LFADS = []
 
-# Flatten the data array for color coding
-colors = mean_rates_for_stop_indices.flatten()
-# Setting labels and title
-xticks_array = np.array(dataset_sizes).flatten()
-rates_fig, ax = plt.subplots(1, 2, figsize=(10, 4))
-rates_fig.suptitle(f'Statistics of rates for different stop indices')
-ax[0].set_title('Mean Rates')
-ax[0].set_xlabel('Sample Size')
-ax[0].set_ylabel('Channels')
-ax[0].set_xticks(ticks=np.linspace(0, num_batches-1, len(xticks_array)))
-ax[1].set_title('Variance of Rates')
-ax[1].set_xlabel('Sample Size')
-ax[1].set_ylabel('Channels')
-ax[1].set_xticks(ticks=np.linspace(0, num_batches-1, len(xticks_array)))
-ax[0].scatter(x_indices, y_indices, c=mean_rates_for_stop_indices.flatten(), cmap='viridis')
-ax[1].scatter(x_indices, y_indices, c=var_rates_for_stop_indices.flatten(), cmap='viridis')
-rates_fig.colorbar(cm.ScalarMappable(cmap='viridis'), ax=ax[0], label='Mean Rates') # normalized color bar
-rates_fig.colorbar(cm.ScalarMappable(cmap='viridis'), ax=ax[1], label='Variance of Rates')
+for use_lfads_param in [True, False]:
+    for i in range(len(stop_indices)):
+
+        best_r2 = -np.inf
+        best_alpha = None
+
+        stop_idx = stop_indices[i]
+        sample_size = dataset_sizes[i]
+        
+        regression_vel_slice, regression_rates_slice = preprocessing(column_name, use_smooth_data=use_smooth_data, start_idx=start_idx, stop_idx=stop_idx, plot=False, use_LFADS=use_lfads_param)
+
+        for idx, alpha_x in enumerate(alpha_values):
+
+            predicted_vel, r2_test, r2_train, train_sem, test_sem = linear_regression_train_val(regression_rates_slice, regression_vel_slice, alpha=alpha_x, folds=fold)
+
+            # mean_kin_for_stop_indices.append(np.mean(regression_vel_slice))
+            # var_kin_for_stop_indices.append(np.var(regression_vel_slice))
+
+            # # rates distribution statistics
+
+            # mean_rates_for_stop_indices[i, :] = np.mean(regression_rates_slice, axis=0)
+            # var_rates_for_stop_indices[i, :] = np.var(regression_rates_slice, axis=0)
+            if r2_test > best_r2:
+                best_r2 = r2_test
+                best_alpha = alpha
+        if use_lfads_param:
+            r2_across_dataset_sizes_LFADS.append(best_r2)
+        else:
+            r2_across_dataset_sizes_smooth.append(best_r2)
+
+assert(len(r2_across_dataset_sizes_smooth) == len(stop_indices))
+assert(len(r2_across_dataset_sizes_LFADS) == len(stop_indices))
+
+fig, axs = plt.subplots(1, 2, figsize=(10, 4))
+fig.suptitle(f'Change in R^2 as more samples are included')
+axs[0].plot(dataset_sizes, r2_across_dataset_sizes_smooth, '-o', label='Smoothed R^2')
+axs[0].set_title('Smoothed R^2')
+axs[0].set_xlabel('Sample Size')
+axs[0].set_ylabel('R^2')
+axs[0].legend()
+axs[1].plot(dataset_sizes, r2_across_dataset_sizes_LFADS, '-o', label='LFADS R^2')
+axs[1].set_title('LFADS R^2')
+axs[1].set_xlabel('Sample Size')
+axs[1].set_ylabel('R^2')
+axs[1].legend()
 plt.show()
+
+
+
+# # Flatten the sample sizes and channels to use in scatter plot
+# x_indices = np.repeat(np.arange(num_batches), num_channels)
+# y_indices = np.tile(np.arange(num_channels), num_batches)
+
+# # Flatten the data array for color coding
+# colors = mean_rates_for_stop_indices.flatten()
+# # Setting labels and title
+# xticks_array = np.array(dataset_sizes).flatten()
+# rates_fig, ax = plt.subplots(1, 2, figsize=(10, 4))
+# rates_fig.suptitle(f'Statistics of rates for different stop indices')
+# ax[0].set_title('Mean Rates')
+# ax[0].set_xlabel('Sample Size')
+# ax[0].set_ylabel('Channels')
+# ax[0].set_xticks(ticks=np.linspace(0, num_batches-1, len(xticks_array)))
+# ax[1].set_title('Variance of Rates')
+# ax[1].set_xlabel('Sample Size')
+# ax[1].set_ylabel('Channels')
+# ax[1].set_xticks(ticks=np.linspace(0, num_batches-1, len(xticks_array)))
+# ax[0].scatter(x_indices, y_indices, c=mean_rates_for_stop_indices.flatten(), cmap='viridis')
+# ax[1].scatter(x_indices, y_indices, c=var_rates_for_stop_indices.flatten(), cmap='viridis')
+# rates_fig.colorbar(cm.ScalarMappable(cmap='viridis'), ax=ax[0], label='Mean Rates') # normalized color bar
+# rates_fig.colorbar(cm.ScalarMappable(cmap='viridis'), ax=ax[1], label='Variance of Rates')
+# plt.show()
 
 # %% 
 
