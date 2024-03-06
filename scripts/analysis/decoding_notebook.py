@@ -62,7 +62,7 @@ cutoff_freq = (2 * np.sqrt(2 * np.log(2))) / (gauss_width_s*(np.sqrt(np.pi)))
 print(f'Cutoff frequency: {cutoff_freq} Hz')
 # %%
 #dataset.smooth_spk(signal_type='lfads_rates', gauss_width=gauss_width_ms, name=f'smooth_{gauss_width_ms}', overwrite=False)
-#dataset.smooth_spk(signal_type='spikes', gauss_width=gauss_width_ms, name='smooth_25', overwrite=False)
+dataset.smooth_spk(signal_type='spikes', gauss_width=gauss_width_ms, name='smooth_25', overwrite=False)
 # dataset.smooth_spk(signal_type='lfads_factors', gauss_width=8, name='smooth_8', overwrite=False)
 # dataset.data.lfads_factors_smooth_8 = dataset.data.lfads_factors_smooth_8.fillna(0)
 
@@ -150,7 +150,7 @@ def linear_regression_train_val(x, y, alpha=0, folds=5):
     y is 1D array of shape (n_bins,) where each value is kinematic data
     """
 
-    kf = KFold(n_splits=folds, shuffle=True, random_state=42)
+    kf = KFold(n_splits=folds,  random_state=42)
     lr = Ridge(alpha=alpha)
 
     r2_test = np.zeros(folds)
@@ -273,67 +273,6 @@ def preprocessing(column_name, use_smooth_data, start_idx, stop_idx, plot=False,
         plot_psd_kinematic_data(regression_vel_slice, use_smooth_data, bin_size=2)
     return regression_vel_slice, regression_rates_slice
 
-# %%
-vel_slice, rates_slice = preprocessing('ankle_x', use_smooth_data=True, start_idx=[22000], stop_idx=[26000], plot=True, use_LFADS=True)
-# %%
-# Plot kinematic data and rates for all indices
-start_idx = [22000]
-stop_idx = [26000]
-kin_slice_ankle_x, rates_slice = return_all_nonNan_slice('ankle_x', use_smooth_data=False, use_LFADS=True)
-kin_slice_ankle_y, _ = return_all_nonNan_slice('ankle_y', use_smooth_data=False, use_LFADS=True)
-kin_slice_knee_x, _ = return_all_nonNan_slice('knee_x', use_smooth_data=False, use_LFADS=True)
-kin_slice_knee_y, _ = return_all_nonNan_slice('knee_y', use_smooth_data=False, use_LFADS=True)
-
-kin_slice_ankle_x = concat_data_given_start_stop_indices(kin_slice_ankle_x, start_idx, stop_idx)
-kin_slice_ankle_y = concat_data_given_start_stop_indices(kin_slice_ankle_y, start_idx, stop_idx)
-kin_slice_knee_x = concat_data_given_start_stop_indices(kin_slice_knee_x, start_idx, stop_idx)
-kin_slice_knee_y = concat_data_given_start_stop_indices(kin_slice_knee_y, start_idx, stop_idx)
-rates_slice = concat_data_given_start_stop_indices(rates_slice, start_idx, stop_idx)
-# reshape kinslice to be 2d
-kin_slice_ankle_x = kin_slice_ankle_x.reshape(-1, 1)
-kin_slice_ankle_y = kin_slice_ankle_y.reshape(-1, 1)
-kin_slice_knee_x = kin_slice_knee_x.reshape(-1, 1)
-kin_slice_knee_y = kin_slice_knee_y.reshape(-1, 1)
-all_kin_data_plot = np.concatenate([kin_slice_ankle_x, kin_slice_ankle_y, kin_slice_knee_x, kin_slice_knee_y], axis=1)
-
-# # normalize rates and all_kin_data_plot on axis 1
-# from sklearn.preprocessing import StandardScaler, MinMaxScaler
-
-# scaler1 = StandardScaler() 
-# scaler2 = StandardScaler()
-
-# all_kin_data_plot = scaler1.fit_transform(all_kin_data_plot)
-# rates_slice = scaler2.fit_transform(rates_slice)
-# import matplotlib.ticker as ticker
-
-
-fig, ax = plt.subplots(2, 1, figsize=(10, 8))
-fig.suptitle(f'Kinematic Data and Rates for indices: {start_idx, stop_idx} - no scaling')
-fig.subplots_adjust(hspace=0.25)
-# ax[0] is rates, ax[1] is kinematic data
-cax0 = ax[0].pcolor(rates_slice.T, cmap='viridis')
-fig.colorbar(cax0, ax=ax[0])
-ax[0].set_title('Rates')
-ax[0].set_xlabel('Time (bins)')
-ax[0].set_ylabel('Rates')
-assert rates_slice.shape[0] == all_kin_data_plot.shape[0]
-cax1 = ax[1].pcolor(all_kin_data_plot.T, cmap='viridis')
-fig.colorbar(cax1, ax=ax[1])
-ax[1].set_title('Position Data')
-ax[1].set_xlabel('Time (bins)')
-ax[1].set_ylabel('Position Data')
-
-yticks = [0, 1, 2, 3]
-yticklabels = ['ankle_x', 'ankle_y', 'knee_x', 'knee_y']
-
-# Set the y-ticks and labels
-ax[1].yaxis.set_major_locator(ticker.FixedLocator(yticks))
-ax[1].yaxis.set_major_formatter(ticker.FixedFormatter(yticklabels))
-
-ax[1].set_ylabel('Position Data')
-
-plt.show()
-
 
 # %%
 use_smooth_data = False
@@ -363,8 +302,8 @@ test_sem_all = []
 fold = 10
 r2_test_value_fold = []
 r2_train_value_fold = []
-start_idx = [11000]
-stop_idx = [11000+3000]
+start_idx = [22000]
+stop_idx = [23000]
 # start_idx = [9650]
 # stop_idx = [9650+600]
 # by itself, 9650 start index, 9650+600 stop index  R^2 = 0.748
@@ -475,8 +414,8 @@ plt.show()
 #from mpl_toolkits.mplot3d import Axes3D
 from matplotlib import cm
 use_smooth_data = True
-start_idx = [11000]
-stop_indices = [[11000+400], [11000+600], [11000+800], [11000+1000], [11000+1200], [11000+1400], [11000+1600], [11000+1800], [11000+2000]]
+start_idx = [22000]
+stop_indices = [[22000+400], [22000+600], [22000+800], [22000+1000], [22000+1200], [22000+1400], [22000+1600], [22000+1800], [22000+2000]]
 mean_kin_for_stop_indices = []
 var_kin_for_stop_indices = []
 num_batches = len(stop_indices)
@@ -601,3 +540,8 @@ plt.xlabel('Samples Included')
 plt.ylabel('Mean and Variance')
 plt.legend()
 plt.show()
+
+# %%
+# plot all kin data for ankle_x
+
+
