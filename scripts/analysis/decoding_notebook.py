@@ -66,6 +66,8 @@ dataset.smooth_spk(signal_type='spikes', gauss_width=gauss_width_ms, name='smoot
 # dataset.smooth_spk(signal_type='lfads_factors', gauss_width=8, name='smooth_8', overwrite=False)
 # dataset.data.lfads_factors_smooth_8 = dataset.data.lfads_factors_smooth_8.fillna(0)
 
+
+
 # %%
 '''
 This function takes a dataframe column and returns indices where data is not NaN
@@ -76,19 +78,26 @@ Parameters:
 Returns:
     trials: list of tuples where each tuple is a start and end index of where data is not NaN
 '''
-def get_change_indices(dataframe_column: pd.Series) -> typing.List[typing.Tuple[int, int]]:
+def get_change_indices(dataframe_column: pd.Series) -> typing.Tuple[np.ndarray, np.ndarray]:
     # Find NaNs
     is_nan = dataframe_column.isna()
 
     # Find Changes in State
     start_indices = np.where(~is_nan & is_nan.shift(1, fill_value=True))[0]
     end_indices = np.where(is_nan & ~is_nan.shift(1, fill_value=True))[0] - 1
+    assert len(start_indices) == len(end_indices)
+    print(f"start indices: {start_indices}\nend indices: {end_indices}")
+    return start_indices, end_indices
 
-    # Extract Indices
-    # +1 to end_indices because range is exclusive
-    trials = list(zip(start_indices, end_indices + 1))
-    return trials
-
+"""
+This function takes a numpy array and returns concatenated data based on start and stop indices
+"""
+def concat_data_given_start_stop_indices(dataset, start_idx, stop_idx):
+    assert len(start_idx) == len(stop_idx), "Start and stop indices lists must be of the same length"
+    
+    concatenated_data = np.concatenate(tuple(dataset[start:stop] for start, stop in zip(start_idx, stop_idx)), axis=0)
+    
+    return concatenated_data
 '''
 This function takes a dataframe and indices where data is not NaN and concatenates the data
 
@@ -108,10 +117,10 @@ def concatenate_trials(df: pd.DataFrame, trials: typing.List[typing.Tuple[int, i
 # %%
 
 """
-Returns all nonNan data of kinematic data for a given column name and returns lfads rates based on those indices
+Returns all nonNan data of kinematic data for all given body parts and returns lfads rates based on those indices as well as the column names
 
 """
-def return_all_nonNan_slice(column_name: str, use_smooth_data: bool = True, use_LFADS: bool = True) -> typing.Tuple[np.ndarray, np.ndarray]:
+def return_all_nonNan_slice(use_smooth_data: bool = True, use_LFADS: bool = True) -> typing.Tuple[pd.DataFrame, np.ndarray, List[str]]:
 
     
     
@@ -130,10 +139,13 @@ def return_all_nonNan_slice(column_name: str, use_smooth_data: bool = True, use_
             all_rates_data = dataset.data.spikes_smooth_25
 
         #all_rates_data = dataset.data.spikes_smooth_100
-    change_indices = get_change_indices(all_kin_data[column_name])
-    kin_slice = concatenate_trials(all_kin_data[column_name], change_indices)
-    rates_slice = concatenate_trials(all_rates_data, change_indices)
-    return kin_slice, rates_slice
+    kin_column_names = all_kin_data.columns
+    start_indices, end_indices = get_change_indices(all_kin_data["hip_x"]) # must use hip_x/hip_y to get change indices for all body parts because hip_x/hip_y is missing some data where there is data for other body parts
+    # .values to convert to numpy array because below function expects numpy array
+    all_valid_kin_data = concat_data_given_start_stop_indices(all_kin_data.values, start_indices, end_indices)
+    rates_slice = concat_data_given_start_stop_indices(all_rates_data.values, start_indices, end_indices)
+    # convert kinematic data back to pandas dataframe 
+    return pd.DataFrame(all_valid_kin_data, columns=kin_column_names), rates_slice, kin_column_names
 
 
 # %% 
@@ -150,7 +162,7 @@ def linear_regression_train_val(x, y, alpha=0, folds=5):
     y is 1D array of shape (n_bins,) where each value is kinematic data
     """
 
-    kf = KFold(n_splits=folds,  random_state=42)
+    kf = KFold(n_splits=folds,  shuffle=True, random_state=42)
     lr = Ridge(alpha=alpha)
 
     r2_test = np.zeros(folds)
@@ -182,21 +194,45 @@ def linear_regression_train_val(x, y, alpha=0, folds=5):
 
     return test_pred, r2_test, r2_train, train_sem, test_sem
 
+# %% 
+
+def append_kinematic_angle_data(all_kin_df: pd.DataFrame) -> pd.DataFrame:
+    """
+        Calculates and Appends knee and ankle angle data to kinematic data and returns all kin data and angles in one dataframe
+    """
+    # get knee and ankle angle data
+    ankle_kinematics_np = all_kin_df[["ankle_x", "ankle_y"]].values
+    hip_kinematics_np = all_kin_df[["hip_x", "hip_y"]].values
+    iliac_crest_kinematics_np = all_kin_df[["iliac_crest_x", "iliac_crest_y"]].values
+    knee_kinematics_np = all_kin_df[["knee_x", "knee_y"]].values
+    toe_kinematics_np = all_kin_df[["toe_x", "toe_y"]].values
+
+    hip_to_knee_vectors = knee_kinematics_np - hip_kinematics_np
+    knee_to_ankle_vectors = ankle_kinematics_np - knee_kinematics_np
+    ankle_to_toe_vectors = toe_kinematics_np - ankle_kinematics_np
+
+    # Dot product and magnitudes for knee angle
+    dot_product_knee = np.sum(hip_to_knee_vectors * knee_to_ankle_vectors, axis=1)
+    mag_hip_to_knee = np.linalg.norm(hip_to_knee_vectors, axis=1)
+    mag_knee_to_ankle = np.linalg.norm(knee_to_ankle_vectors, axis=1)
+
+    # Dot product and magnitudes for ankle angle
+    dot_product_ankle = np.sum(knee_to_ankle_vectors * ankle_to_toe_vectors, axis=1)
+    mag_ankle_to_toe = np.linalg.norm(ankle_to_toe_vectors, axis=1)
+
+    # Angle calculation
+    knee_angles_vectorized = np.arccos(dot_product_knee / (mag_hip_to_knee * mag_knee_to_ankle)) * (180 / np.pi)
+    ankle_angles_vectorized = np.arccos(dot_product_ankle / (mag_knee_to_ankle * mag_ankle_to_toe)) * (180 / np.pi)
+
+    
+    all_kin_df["knee_angle"] = knee_angles_vectorized
+    all_kin_df["ankle_angle"] = ankle_angles_vectorized
+
+    return all_kin_df
+
 
 # %% 
-"""
-This function takes a numpy array and returns concatenated data based on start and stop indices
-"""
-def concat_data_given_start_stop_indices(dataset, start_idx, stop_idx):
-    assert len(start_idx) == len(stop_idx), "Start and stop indices lists must be of the same length"
-    
-    data_slices = []
-    for start, stop in zip(start_idx, stop_idx):
-        data_slices.append(dataset[start:stop])
-    
-    concatenated_data = np.concatenate(data_slices, axis=0)
-    
-    return concatenated_data
+
 
 def plot_rates_vel_reg(regression_vel_slice, regression_rates_slice, start_idx, stop_idx):
     """
@@ -238,8 +274,12 @@ def preprocessing(column_name, use_smooth_data, start_idx, stop_idx, plot=False,
         preprocessing steps. output will be used for linear regression
     """
     # PREPROCESSING
-    kin_slice, rates_slice = return_all_nonNan_slice(column_name, use_smooth_data=use_smooth_data, use_LFADS=use_LFADS)
-    regression_vel_slice = diff_filter(kin_slice)
+    all_kin_df, rates_slice, _ = return_all_nonNan_slice(use_smooth_data=use_smooth_data, use_LFADS=use_LFADS)
+    all_kin_slice_and_angle_df = append_kinematic_angle_data(all_kin_df)
+
+    kin_slice = all_kin_slice_and_angle_df[column_name].values
+    regression_vel_slice = kin_slice
+    #regression_vel_slice = diff_filter(kin_slice)
     regression_rates_slice = np.log(rates_slice + 1e-10)
 
 
@@ -303,7 +343,7 @@ fold = 10
 r2_test_value_fold = []
 r2_train_value_fold = []
 start_idx = [22000]
-stop_idx = [23000]
+stop_idx = [22000+6000]
 # start_idx = [9650]
 # stop_idx = [9650+600]
 # by itself, 9650 start index, 9650+600 stop index  R^2 = 0.748
@@ -314,6 +354,7 @@ for idx, column_name in enumerate(dataset.data.kin_pos.columns):
     if idx > 0:
         # only decode one column for now
         break
+    column_name = "ankle_x"
     regression_vel_slice, regression_rates_slice = preprocessing(column_name, use_smooth_data, start_idx=start_idx, stop_idx=stop_idx, plot=True, use_LFADS=True)
     best_alpha = None
     best_r2 = -np.inf
@@ -542,6 +583,50 @@ plt.legend()
 plt.show()
 
 # %%
-# plot all kin data for ankle_x
+# calculate ankle and knee angle from kinematic data
+use_smooth_data = False
+all_kin_df, rates_slice, body_part_names = return_all_nonNan_slice(use_smooth_data=use_smooth_data)
+all_kin_and_angle_df = append_kinematic_angle_data(all_kin_df)
+start_idx = 22000
+stop_idx = 23000
+
+ankle_angle = all_kin_and_angle_df["ankle_angle"].iloc[start_idx:stop_idx]
+knee_angle = all_kin_and_angle_df["knee_angle"].iloc[start_idx:stop_idx]
+ankle_x_pos = all_kin_and_angle_df['ankle_x'].iloc[start_idx:stop_idx]
+rates_slice = rates_slice[start_idx: stop_idx]
+
+assert(rates_slice.shape[0] == ankle_angle.shape[0])
+
+fig, ax = plt.subplots(3,1, figsize=(5,10))
+x = np.arange(start_idx, stop_idx)
+y = np.arange(rates_slice.shape[1])  # assuming rates_slice.shape[1] is the correct dimension for your rates
+X, Y = np.meshgrid(x, y)
+
+# Use the generated X (2D array of x-coordinates) and Y (2D array of y-coordinates) for pcolor
+vmax = np.max(rates_slice)
+c = ax[0].pcolor(X, Y, rates_slice.T, cmap='viridis', vmin=0, vmax=vmax)
+ax[0].set_title('Rates')
+ax[0].set_xlabel('Time (bins)')
+#plt.colorbar(c)
+ax[0].set_title('Rates')
+ax[0].set_xlabel('Time (bins)')
+ax[0].set_ylabel('Rates')
+ax[0].set_xlim(start_idx, stop_idx)
 
 
+
+ax[1].plot(ankle_x_pos)
+ax[1].set_title("Ankle X position")
+ax[1].set_xlabel('Time (bins)')
+ax[1].set_ylabel("Position (au)")
+
+ax[2].plot(ankle_angle)
+ax[2].set_title("Ankle angle")
+ax[2].set_xlabel("Time (bins)")
+ax[2].set_ylabel("Angle (degrees)")
+fig.subplots_adjust(hspace=0.5)
+
+plt.show()
+
+
+# %%
