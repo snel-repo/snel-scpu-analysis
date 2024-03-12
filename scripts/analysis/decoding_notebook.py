@@ -66,7 +66,18 @@ dataset.smooth_spk(signal_type='spikes', gauss_width=gauss_width_ms, name='smoot
 # dataset.smooth_spk(signal_type='lfads_factors', gauss_width=8, name='smooth_8', overwrite=False)
 # dataset.data.lfads_factors_smooth_8 = dataset.data.lfads_factors_smooth_8.fillna(0)
 
+# %% 
 
+# print out the ms of the trial start and ends
+for index, trial in dataset.trial_info.iterrows():
+    if trial['event_type'] == 'locomotion':
+        trial_id = trial['trial_id']
+        start_time_ms = trial['start_time'].total_seconds() * 1000
+        end_time_ms = trial['end_time'].total_seconds() * 1000
+        # convert to bins of size dataset.bin_size
+        start_time_bin = int(start_time_ms / bin_size)
+        end_time_bin = int(end_time_ms / bin_size)
+        print(f"Start bin: {start_time_bin}, End bin: {end_time_bin} for trial {trial_id}")
 
 # %%
 '''
@@ -92,27 +103,23 @@ def get_change_indices(dataframe_column: pd.Series) -> typing.Tuple[np.ndarray, 
 """
 This function takes a numpy array and returns concatenated data based on start and stop indices
 """
-def concat_data_given_start_stop_indices(dataset, start_idx, stop_idx):
-    assert len(start_idx) == len(stop_idx), "Start and stop indices lists must be of the same length"
+def concat_data_given_start_stop_indices(dataset: np.ndarray, start_indices: List[int], stop_indices: List[int]) -> np.ndarray:
+    assert len(start_indices) == len(stop_indices), "Start and stop indices lists must be of the same length"
     
-    concatenated_data = np.concatenate(tuple(dataset[start:stop] for start, stop in zip(start_idx, stop_idx)), axis=0)
+    concatenated_data = np.concatenate(tuple(dataset[start:stop] for start, stop in zip(start_indices, stop_indices)), axis=0)
+    orig_indices = orig_indices_to_new_indices(start_indices, stop_indices)
     
-    return concatenated_data
-'''
-This function takes a dataframe and indices where data is not NaN and concatenates the data
-
-Parameters:
-    df: dataframe of kinematic data
-    trials: list of tuples where each tuple is a start and end index of where data is not NaN
-
-Returns:
-    concat_trials: numpy array of concatenated non-NaN data
-'''
-
-def concatenate_trials(df: pd.DataFrame, trials: typing.List[typing.Tuple[int, int]]) -> np.ndarray:
-    # Concatenate trials
-    concat_trials = np.concatenate([df.iloc[start:end].values for start, end in trials])
-    return concat_trials
+    return concatenated_data, orig_indices
+# %%
+def orig_indices_to_new_indices(start_indices: List[int], end_indices: List[int]) -> List[int]:
+    """
+        Given the start and end indices of non-NaN data, make a list of indices that correspond to the original indices
+        For example: start_indices = [0, 10, 100] and end_indices = [5, 15, 105], then the function will return [0, 1, 2, 3, 4, 10, 11, 12, 13, 14, 100, 101, 102, 103, 104, 105]
+    """
+    orig_indices = []
+    for start_index, stop_index in zip(start_indices, end_indices):
+        orig_indices.extend(range(start_index, stop_index+1))
+    return orig_indices
 
 # %%
 
@@ -141,11 +148,13 @@ def return_all_nonNan_slice(use_smooth_data: bool = True, use_LFADS: bool = True
         #all_rates_data = dataset.data.spikes_smooth_100
     kin_column_names = all_kin_data.columns
     start_indices, end_indices = get_change_indices(all_kin_data["hip_x"]) # must use hip_x/hip_y to get change indices for all body parts because hip_x/hip_y is missing some data where there is data for other body parts
-    # .values to convert to numpy array because below function expects numpy array
-    all_valid_kin_data = concat_data_given_start_stop_indices(all_kin_data.values, start_indices, end_indices)
-    rates_slice = concat_data_given_start_stop_indices(all_rates_data.values, start_indices, end_indices)
+    
+    # orig_indices is a list of the original indices that correspond to the new indices
+    all_valid_kin_data, orig_indices = concat_data_given_start_stop_indices(all_kin_data.values, start_indices, end_indices) # .values to convert to numpy array because below function expects numpy array
+
+    rates_slice, _ = concat_data_given_start_stop_indices(all_rates_data.values, start_indices, end_indices)
     # convert kinematic data back to pandas dataframe 
-    return pd.DataFrame(all_valid_kin_data, columns=kin_column_names), rates_slice, kin_column_names
+    return pd.DataFrame(all_valid_kin_data, columns=kin_column_names), rates_slice, kin_column_names, orig_indices
 
 
 # %% 
@@ -274,7 +283,8 @@ def preprocessing(column_name, use_smooth_data, start_idx, stop_idx, plot=False,
         preprocessing steps. output will be used for linear regression
     """
     # PREPROCESSING
-    all_kin_df, rates_slice, _ = return_all_nonNan_slice(use_smooth_data=use_smooth_data, use_LFADS=use_LFADS)
+    all_kin_df, rates_slice, _, orig_indices = return_all_nonNan_slice(use_smooth_data=use_smooth_data, use_LFADS=use_LFADS)
+   
     all_kin_slice_and_angle_df = append_kinematic_angle_data(all_kin_df)
 
     kin_slice = all_kin_slice_and_angle_df[column_name].values
@@ -282,10 +292,16 @@ def preprocessing(column_name, use_smooth_data, start_idx, stop_idx, plot=False,
     #regression_vel_slice = diff_filter(kin_slice)
     regression_rates_slice = np.log(rates_slice + 1e-10)
 
-
+    # subselect data from non NaN indices
     if len(start_idx) >= 1 and len(stop_idx) >= 1 : # if start and stop indices are provided
-        regression_vel_slice = concat_data_given_start_stop_indices(regression_vel_slice, start_idx, stop_idx)
-        regression_rates_slice = concat_data_given_start_stop_indices(regression_rates_slice, start_idx, stop_idx)
+
+        # subset indices are the indices of nonNan data, so we can use it to get the original indices
+
+        regression_vel_slice, subset_indices = concat_data_given_start_stop_indices(regression_vel_slice, start_idx, stop_idx)
+        orig_indices = [orig_indices[i] for i in subset_indices]
+        regression_rates_slice, _ = concat_data_given_start_stop_indices(regression_rates_slice, start_idx, stop_idx)
+        
+        print(f"Original indices: {orig_indices}")
 
 
     index_smallest_10 = np.argpartition(regression_vel_slice, 10)[:10]
@@ -310,7 +326,7 @@ def preprocessing(column_name, use_smooth_data, start_idx, stop_idx, plot=False,
     if plot:
         plot_rates_slice = np.exp(regression_rates_slice) - 1e-10
         plot_rates_vel_reg(regression_vel_slice, plot_rates_slice, start_idx, stop_idx)
-        plot_psd_kinematic_data(regression_vel_slice, use_smooth_data, bin_size=2)
+        #plot_psd_kinematic_data(regression_vel_slice, use_smooth_data, bin_size=2)
     return regression_vel_slice, regression_rates_slice
 
 
@@ -342,8 +358,9 @@ test_sem_all = []
 fold = 10
 r2_test_value_fold = []
 r2_train_value_fold = []
-start_idx = [22000]
-stop_idx = [22000+6000]
+# these are handpicked indices from the nonNan data. currently, they are based on the first video
+start_idx = [0]
+stop_idx = [5000] # end times for video in trial_info is wrong so can just choose some arbitrary end time
 # start_idx = [9650]
 # stop_idx = [9650+600]
 # by itself, 9650 start index, 9650+600 stop index  R^2 = 0.748
@@ -431,27 +448,9 @@ ax[1].set_xscale('log')
 ax[1].legend()
 plt.show()
 
-# %%
-# column_name = 'ankle_x'
-# kin_slice, rates_slice = return_all_nonNan_slice(column_name, use_smooth_data=use_smooth_data)
-# full_vel_slice = diff_filter(kin_slice)
-# regression_rates_slice = np.log(rates_slice + 1e-10)
 
-# smallest_5 = np.partition(regression_vel_slice, 10)[:10]
-# index_smallest_5 = np.argpartition(regression_vel_slice, 5)[:10]
-# print(smallest_5)
-# print(index_smallest_5)
 # %%
-# data exploration - plot all kinematic data
-
-# fig, ax = plt.subplots(1, 1, figsize=(10, 4))
-# ax.plot(full_vel_slice)
-# ax.set_title('Kinematic Data')
-# ax.set_xlabel('Time (bins)')
-# ax.set_ylabel('Velocity')
-# plt.show()
-# %%
-# visualize how R^2 between  as more samples are included
+# block to visualize how R^2 between  as more samples are included
 #from mpl_toolkits.mplot3d import Axes3D
 from matplotlib import cm
 use_smooth_data = True
@@ -583,10 +582,44 @@ plt.legend()
 plt.show()
 
 # %%
-# calculate ankle and knee angle from kinematic data
+# plot kinematics for video 0
+video_start_bin = 58153
+video_len = 43 # seconds
+video_end_bin = int(58153 + 43 * 1000 // dataset.bin_size)
 use_smooth_data = False
-all_kin_df, rates_slice, body_part_names = return_all_nonNan_slice(use_smooth_data=use_smooth_data)
-all_kin_and_angle_df = append_kinematic_angle_data(all_kin_df)
+all_kin_df_mine, rates_slice, body_part_names, orig_indices = return_all_nonNan_slice(use_smooth_data=use_smooth_data)
+# %%
+# video_bins = list(range(video_start_bin, video_end_bin+1))
+
+# video_kinematics = dataset.data.kin_pos.iloc[video_start_bin:video_end_bin+1]
+
+# # Find the intersection while preserving the order
+# video_bins_with_kin = []
+# video_bins_no_kin = []
+# for bin_num in video_bins:
+#     if bin_num in orig_indices:
+#         video_bins_with_kin.append(bin_num)
+#     else:
+#         video_bins_no_kin.append(bin_num)
+# Store the original DataFrame
+original_kin_df = dataset.data.kin_pos
+
+# Get the non-NaN slice
+non_nan_slice = original_kin_df.dropna()
+
+# Perform the operations on the non-NaN slice
+non_nan_slice = append_kinematic_angle_data(non_nan_slice.copy())
+
+# Combine the original DataFrame with the non-NaN slice
+all_kin_and_angle_df = non_nan_slice.combine_first(original_kin_df)
+
+# Create boolean masks for NaN values
+ankle_x_nan = all_kin_and_angle_df["hip_x"].isna()
+knee_angle_nan = all_kin_and_angle_df["knee_angle"].isna()
+
+
+
+# %%
 start_idx = 22000
 stop_idx = 23000
 
