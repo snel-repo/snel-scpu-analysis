@@ -5,6 +5,8 @@ REQUIREMENTS: merged pkl file from merge_chopped_torch_outputs.py
 """
 
 # %% INPUTS AND PATHS
+%load_ext autoreload
+%autoreload 2
 import os
 import pickle as pkl
 import h5py
@@ -13,6 +15,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.cm as colormap
 from snel_toolkit.datasets.nwb import NWBDataset
+from decoding_functions import *
 
 import dill
 from analysis_utils import *
@@ -79,227 +82,6 @@ for index, trial in dataset.trial_info.iterrows():
         end_time_bin = int(end_time_ms / bin_size)
         print(f"Start bin: {start_time_bin}, End bin: {end_time_bin} for trial {trial_id}")
 
-# %%
-"""
-This function takes a numpy array and returns concatenated data based on start and stop indices
-"""
-def concat_data_given_start_stop_indices(dataset: np.ndarray, start_indices: List[int], stop_indices: List[int]) -> np.ndarray:
-    assert len(start_indices) == len(stop_indices), "Start and stop indices lists must be of the same length"
-    
-    concatenated_data = np.concatenate(tuple(dataset[start:stop] for start, stop in zip(start_indices, stop_indices)), axis=0)
-    
-    return concatenated_data
-
-
-# %%
-
-"""
-Returns all nonNan data of kinematic data for all given body parts and returns lfads rates based on those indices as well as the column names
-
-"""
-def return_all_nonNan_slice(use_smooth_data: bool = True, use_LFADS: bool = True) -> typing.Tuple[pd.DataFrame, np.ndarray, List[str]]:
-
-    
-    
-    if use_smooth_data:
-        all_kin_data = dataset.data.kin_pos_smooth_3
-        if use_LFADS:
-            all_rates_data = dataset.data.lfads_rates_smooth_8
-        else:
-            all_rates_data = dataset.data.spikes_smooth_25 # smoothing LFADS rates makes R^2 improve the most compared to smoothing kinematic data
-        #all_rates_data = dataset.data.lfads_rates_smooth_50
-    else:
-        all_kin_data = dataset.data.kin_pos
-        if use_LFADS:
-            all_rates_data = dataset.data.lfads_rates
-        else:
-            all_rates_data = dataset.data.spikes_smooth_25
-
-        #all_rates_data = dataset.data.spikes_smooth_100
-    kin_column_names = all_kin_data.columns
-    all_kin_data['Original_Index'] = np.arange(len(all_kin_data))
-    all_kin_data_nonNan = all_kin_data.dropna().copy()
-    non_Nan_indices = all_kin_data_nonNan['Original_Index'].values
-    print(non_Nan_indices)
-    rates_slice = all_rates_data.iloc[non_Nan_indices]
-    # convert kinematic data back to pandas dataframe 
-    return all_kin_data_nonNan, rates_slice, kin_column_names
-
-
-# %% 
-
-def diff_filter(x):
-        """differentation filter"""
-        return signal.savgol_filter(x, 27, 5, deriv=1, axis=0)
-
-
-def linear_regression_train_val(x, y, alpha=0, folds=5):
-    """
-    Function to perform linear regression with cross validation to decode kinematic data from neural data (eg. lfads rates, factors, smooth spikes)
-    x is 2D array of shape (n_bins, n_channels) which is (samples, features)
-    y is 1D array of shape (n_bins,) where each value is kinematic data
-    """
-
-    kf = KFold(n_splits=folds,  shuffle=True, random_state=42)
-    lr = Ridge(alpha=alpha)
-
-    r2_test = np.zeros(folds)
-    r2_train = np.zeros(folds)
-    fold_mean_x = [] # for test data
-    fold_mean_y = [] # for test data
-    test_pred = np.zeros_like(y)
-
-    for split_num, (train_ix, test_ix) in enumerate(kf.split(x)):
-        x_train, x_test = x[train_ix, :], x[test_ix, :]
-        y_train, y_test = y[train_ix], y[test_ix]
-
-
-        lr.fit(x_train, y_train)
-        test_pred[test_ix] = lr.predict(x_test)
-        train_pred = lr.predict(x_train)
-        r2_test[split_num] = r2_score(y_test, test_pred[test_ix])
-        r2_train[split_num] = r2_score(y_train, train_pred)
-        
-        fold_mean_x.append(np.mean(x_test,axis=0))
-        fold_mean_y.append(np.mean(y_test))
-    
-    test_sem = np.std(r2_test) / np.sqrt(folds)
-    train_sem = np.std(r2_train) / np.sqrt(folds)
- 
-    r2_test = np.mean(r2_test)
-    r2_train = np.mean(r2_train)
-
-
-    return test_pred, r2_test, r2_train, train_sem, test_sem
-
-# %% 
-
-def append_kinematic_angle_data(all_kin_df: pd.DataFrame) -> pd.DataFrame:
-    """
-        Calculates and Appends knee and ankle angle data to kinematic data and returns all kin data and angles in one dataframe
-    """
-    # get knee and ankle angle data
-    ankle_kinematics_np = all_kin_df[["ankle_x", "ankle_y"]].values
-    hip_kinematics_np = all_kin_df[["hip_x", "hip_y"]].values
-    iliac_crest_kinematics_np = all_kin_df[["iliac_crest_x", "iliac_crest_y"]].values
-    knee_kinematics_np = all_kin_df[["knee_x", "knee_y"]].values
-    toe_kinematics_np = all_kin_df[["toe_x", "toe_y"]].values
-
-    hip_to_knee_vectors = knee_kinematics_np - hip_kinematics_np
-    knee_to_ankle_vectors = ankle_kinematics_np - knee_kinematics_np
-    ankle_to_toe_vectors = toe_kinematics_np - ankle_kinematics_np
-
-    # Dot product and magnitudes for knee angle
-    dot_product_knee = np.sum(hip_to_knee_vectors * knee_to_ankle_vectors, axis=1)
-    mag_hip_to_knee = np.linalg.norm(hip_to_knee_vectors, axis=1)
-    mag_knee_to_ankle = np.linalg.norm(knee_to_ankle_vectors, axis=1)
-
-    # Dot product and magnitudes for ankle angle
-    dot_product_ankle = np.sum(knee_to_ankle_vectors * ankle_to_toe_vectors, axis=1)
-    mag_ankle_to_toe = np.linalg.norm(ankle_to_toe_vectors, axis=1)
-
-    # Angle calculation
-    knee_angles_vectorized = np.arccos(dot_product_knee / (mag_hip_to_knee * mag_knee_to_ankle)) * (180 / np.pi)
-    ankle_angles_vectorized = np.arccos(dot_product_ankle / (mag_knee_to_ankle * mag_ankle_to_toe)) * (180 / np.pi)
-
-    
-    all_kin_df["knee_angle"] = knee_angles_vectorized
-    all_kin_df["ankle_angle"] = ankle_angles_vectorized
-
-    return all_kin_df
-
-
-# %% 
-
-
-def plot_rates_vel_reg(regression_vel_slice, regression_rates_slice, start_idx, stop_idx):
-    """
-    Plots velocity and rates (input to linear regression model)
-    """
-    fig, ax = plt.subplots(2, 1, figsize=(6, 10))
-    
-    fig.suptitle(f'Velocity and Rates indices {start_idx, stop_idx}')
-    fig.subplots_adjust(hspace=0.25)
-
-    ax[0].plot(regression_vel_slice)
-    ax[0].set_title('Velocity')
-    ax[0].set_xlabel('Time (bins)')
-    ax[0].set_ylabel('Velocity')
-    vmax = np.max(regression_rates_slice)
-    c = ax[1].pcolor(regression_rates_slice.T, cmap='viridis', vmin=0, vmax=vmax)
-    ax[1].set_title('Rates')
-    ax[1].set_xlabel('Time (bins)')
-    ax[1].set_ylabel('Rates')
-    plt.colorbar(c)
-    plt.show()
-
-def plot_psd_kinematic_data(kin_slice, use_smooth_data, bin_size=2):
-    """
-    Plots power spectral density of kinematic data
-    """
-    fig, ax = plt.subplots(1, 1, figsize=(8, 4))
-    fs = 1/(bin_size/1000) # sampling frequency in Hz
-    f, Pxx_den = signal.welch(kin_slice, fs, nperseg=256)
-    ax.semilogy(f, Pxx_den)
-    title = f'PSD: kinematic data Smooth: cutoff: {cutoff_freq}' if use_smooth_data else f'PSD: kinematic data'
-    ax.set_title(title)
-    ax.set_xlabel('frequency [Hz]')
-    ax.set_ylabel('PSD [V**2/Hz]')
-    plt.show()
-
-def preprocessing(column_name, use_smooth_data, start_indices, stop_indices, plot=False, use_LFADS=True):
-    """
-        preprocessing steps. output will be used for linear regression
-    """
-    # PREPROCESSING
-    # all_kin_df has a new column called original indices which are the nonNan indices
-    all_kin_df, rates_slice, _ = return_all_nonNan_slice(use_smooth_data=use_smooth_data, use_LFADS=use_LFADS)
-   
-    all_kin_slice_and_angle_df = append_kinematic_angle_data(all_kin_df)
-
-    kin_slice = all_kin_slice_and_angle_df[column_name].values
-    regression_vel_slice = kin_slice
-    #regression_vel_slice = diff_filter(kin_slice)
-    regression_rates_slice = np.log(rates_slice + 1e-10)
-
-    # subselect data from non NaN indices
-    assert len(start_indices) == len(stop_indices)
-    if len(start_indices) >= 1: # if start and stop indices are provided
-
-        # subset indices are the indices of nonNan data, so we can use it to get the original indices
-
-        regression_vel_slice = concat_data_given_start_stop_indices(regression_vel_slice, start_indices, stop_indices)
-        
-        regression_rates_slice = concat_data_given_start_stop_indices(regression_rates_slice, start_indices, stop_indices)
-        
-        orig_indices = concat_data_given_start_stop_indices(all_kin_df['Original_Index'].values, start_indices, stop_indices)
-        print(f"Orig_indices: {orig_indices}")
-
-    index_smallest_10 = np.argpartition(regression_vel_slice, 10)[:10]
-    index_largest_10 = np.argpartition(regression_vel_slice, -10)[-10:]
-    outlier_indices = np.concatenate((index_smallest_10, index_largest_10))
-    
-    # outlier_min = np.argmin(regression_vel_slice)
-    # val_min = regression_vel_slice[outlier_min]
-    # print(val_min)
-    # outlier_max = np.argmax(regression_vel_slice)
-    regression_vel_slice = np.delete(regression_vel_slice, outlier_indices)
-    regression_rates_slice = np.delete(regression_rates_slice, outlier_indices, axis=0)
-
-    # apply wiener filter
-    # m = 20
-    # regression_vel_slice = np.convolve(regression_vel_slice, np.ones((m,))/m, mode='same')
-
-    # delete channels with large variance
-    # var = np.var(regression_rates_slice, axis=0)
-    # large_variance_channels = np.where(var > 5)
-    # regression_rates_slice = np.delete(regression_rates_slice, large_variance_channels, axis=1) # remove channels with large variance
-    if plot:
-        plot_rates_slice = np.exp(regression_rates_slice) - 1e-10
-        plot_rates_vel_reg(regression_vel_slice, plot_rates_slice, start_idx, stop_idx)
-        #plot_psd_kinematic_data(regression_vel_slice, use_smooth_data, bin_size=2)
-    return regression_vel_slice, regression_rates_slice
-
 
 # %%
 use_smooth_data = False
@@ -330,7 +112,7 @@ fold = 10
 r2_test_value_fold = []
 r2_train_value_fold = []
 # these are handpicked indices from the nonNan data. currently, they are based on the first video
-start_indices = [0]
+start_indices = [0] # this is orig_index 58153 and first video starts at 58027 meaning we have kinematics from 
 stop_indices = [5000] # end times for video in trial_info is wrong so can just choose some arbitrary end time
 # start_idx = [9650]
 # stop_idx = [9650+600]
@@ -342,8 +124,8 @@ for idx, column_name in enumerate(dataset.data.kin_pos.columns):
     if idx > 0:
         # only decode one column for now
         break
-    column_name = "ankle_x"
-    regression_vel_slice, regression_rates_slice = preprocessing(column_name, use_smooth_data, start_indices=start_indices, stop_indices=stop_indices, plot=True, use_LFADS=True)
+    column_name = "knee_angle"
+    regression_vel_slice, regression_rates_slice, orig_indices = preprocessing(dataset, column_name, use_smooth_data, start_indices=start_indices, stop_indices=stop_indices, plot=True, use_LFADS=True)
     best_alpha = None
     best_r2 = -np.inf
     for i, alpha in enumerate(alpha_values):
@@ -383,7 +165,7 @@ for idx, column_name in enumerate(dataset.data.kin_pos.columns):
 
 # plot best alpha
 fig, ax = plt.subplots(1, 2, figsize=(10, 4))
-fig.suptitle(f"LFADS Rates indices: {start_idx, stop_idx}")
+fig.suptitle(f"LFADS Rates indices: {orig_indices[0], orig_indices[-1]}")
 ax[0].plot(best_true, label='True')
 ax[0].plot(best_pred, label='Predicted')
 ax[0].set_title(f'Predicted vs True. Best Alpha: {round(best_alpha, 3)} $R^2$: {round(best_r2, 6)}')
@@ -516,41 +298,6 @@ plt.show()
 # rates_fig.colorbar(cm.ScalarMappable(cmap='viridis'), ax=ax[1], label='Variance of Rates')
 # plt.show()
 
-# %% 
-
-for channel in range(num_channels):
-    plt.plot(range(num_batches), mean_rates_for_stop_indices[:, channel], label=f'Channel {channel}')
-
-# Add labels and title
-plt.xticks(ticks=np.linspace(0, num_batches-1, len(xticks_array)), labels=xticks_array)
-
-plt.xlabel('Batch Number')
-plt.ylabel('Mean of Rates')
-plt.title('Mean of Rates for Each Channel Over Batches')
-
-plt.show()
-
-for channel in range(num_channels):
-    plt.plot(range(num_batches), var_rates_for_stop_indices[:, channel], label=f'Channel {channel}')
-
-# Add labels and title
-plt.xticks(ticks=np.linspace(0, num_batches-1, len(xticks_array)), labels=xticks_array)
-
-plt.xlabel('Batch Number')
-plt.ylabel('Variance of Rates')
-plt.title('Variance of Rates for Each Channel Over Batches')
-
-plt.show()
-
-
-# %%
-plt.scatter(sample_sizes, mean_kin_for_stop_indices, label="mean")
-plt.scatter(sample_sizes, var_kin_for_stop_indices, label="variance")
-plt.title('Mean and Variance of Kinematic Data for different stop indices')
-plt.xlabel('Samples Included')
-plt.ylabel('Mean and Variance')
-plt.legend()
-plt.show()
 
 # %%
 # plot kinematics for video 0
@@ -558,35 +305,21 @@ video_start_bin = 58153
 video_len = 43 # seconds
 video_end_bin = int(58153 + 43 * 1000 // dataset.bin_size)
 use_smooth_data = False
-all_kin_df_mine, rates_slice, body_part_names = return_all_nonNan_slice(use_smooth_data=use_smooth_data)
+column_name = 'ankle_x'
+original_df = dataset.data.kin_pos
+all_kin_df_mine, rates_slice, body_part_names = return_all_nonNan_slice(dataset, use_smooth_data=use_smooth_data)
 # %%
-# video_bins = list(range(video_start_bin, video_end_bin+1))
+all_kin_df_mine = all_kin_df_mine.fillna(-1)
+non_nan_kin_with_angle = append_kinematic_angle_data(all_kin_df_mine)
+all_kin_and_angle_df = non_nan_kin_with_angle.combine_first(original_df)
 
-# video_kinematics = dataset.data.kin_pos.iloc[video_start_bin:video_end_bin+1]
 
-# # Find the intersection while preserving the order
-# video_bins_with_kin = []
-# video_bins_no_kin = []
-# for bin_num in video_bins:
-#     if bin_num in orig_indices:
-#         video_bins_with_kin.append(bin_num)
-#     else:
-#         video_bins_no_kin.append(bin_num)
-# Store the original DataFrame
-original_kin_df = dataset.data.kin_pos
+# !!combine_first is confirmed working!!
 
-# Get the non-NaN slice
-non_nan_slice = original_kin_df.dropna()
 
-# Perform the operations on the non-NaN slice
-non_nan_slice = append_kinematic_angle_data(non_nan_slice.copy())
-
-# Combine the original DataFrame with the non-NaN slice
-all_kin_and_angle_df = non_nan_slice.combine_first(original_kin_df)
-
-# Create boolean masks for NaN values
-ankle_x_nan = all_kin_and_angle_df["hip_x"].isna()
-knee_angle_nan = all_kin_and_angle_df["knee_angle"].isna()
+t_axis = np.arange(video_start_bin, video_end_bin)
+kin_data_plot = all_kin_and_angle_df[column_name].iloc[video_start_bin:video_end_bin]
+plt.plot(t_axis, kin_data_plot, label='Ankle X')
 
 
 
