@@ -15,9 +15,10 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.cm as colormap
 from snel_toolkit.datasets.nwb import NWBDataset
-from decoding_functions import *
 
 import dill
+from decoding_functions import *
+
 from analysis_utils import *
 import scipy.signal as signal
 
@@ -300,26 +301,48 @@ plt.show()
 
 
 # %%
+# video timestamps 
+# Walking begins ~2 seconds
 # plot kinematics for video 0
-video_start_bin = 58153
+video_start_bin = 58027
 video_len = 43 # seconds
-video_end_bin = int(58153 + 43 * 1000 // dataset.bin_size)
+video_end_bin = int(video_start_bin + video_len * 1000 // dataset.bin_size)
 use_smooth_data = False
 column_name = 'ankle_x'
 original_df = dataset.data.kin_pos
 all_kin_df_mine, rates_slice, body_part_names = return_all_nonNan_slice(dataset, use_smooth_data=use_smooth_data)
 # %%
-all_kin_df_mine = all_kin_df_mine.fillna(-1)
 non_nan_kin_with_angle = append_kinematic_angle_data(all_kin_df_mine)
 all_kin_and_angle_df = non_nan_kin_with_angle.combine_first(original_df)
-
+all_kin_and_angle_df.fillna(-1, inplace=True)
 
 # !!combine_first is confirmed working!!
 
 
 t_axis = np.arange(video_start_bin, video_end_bin)
-kin_data_plot = all_kin_and_angle_df[column_name].iloc[video_start_bin:video_end_bin]
-plt.plot(t_axis, kin_data_plot, label='Ankle X')
+fig, axs = plt.subplots(2, 1, figsize=(10, 4))
+axs = axs.flatten()
+fig.suptitle(f'Kinematic data from video 0')
+
+
+# plot indices for first locomotion bout (indices 60000-62500)
+start_idx = 66500
+stop_idx = 68500
+for idx, column_name in enumerate(['ankle_x', 'knee_angle']):
+    kin_data_plot = all_kin_and_angle_df[column_name].iloc[start_idx:stop_idx]
+    t_axis = np.arange(start_idx, stop_idx)
+    t_axis -= video_start_bin
+    # convert to seconds
+    t_axis = t_axis * dataset.bin_size / 1000
+    axs[idx].plot(t_axis, kin_data_plot, label=column_name)
+    axs[idx].set_title(f'Indices: {start_idx, stop_idx} Data for {column_name} ')
+    axs[idx].set_xlabel('Time (s) relative to video start')
+    y_label = 'Position (au)' if column_name == 'ankle_x' else 'Angle (degrees)'
+    axs[idx].set_ylabel(y_label)
+    axs[idx].legend()
+
+fig.subplots_adjust(hspace=1)
+
 
 
 

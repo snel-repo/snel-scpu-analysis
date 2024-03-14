@@ -28,24 +28,19 @@ Returns all nonNan data of kinematic data for all given body parts and returns l
 
 """
 def return_all_nonNan_slice(dataset, use_smooth_data: bool = True, use_LFADS: bool = True) -> typing.Tuple[pd.DataFrame, pd.DataFrame, List[str]]:
-
-    
-    
     if use_smooth_data:
-        all_kin_data = dataset.data.kin_pos_smooth_3
+        all_kin_data = dataset.data.kin_pos_smooth_3.copy()
         if use_LFADS:
             all_rates_data = dataset.data.lfads_rates_smooth_8
         else:
-            all_rates_data = dataset.data.spikes_smooth_25 # smoothing LFADS rates makes R^2 improve the most compared to smoothing kinematic data
-        #all_rates_data = dataset.data.lfads_rates_smooth_50
+            all_rates_data = dataset.data.spikes_smooth_25
     else:
-        all_kin_data = dataset.data.kin_pos
+        all_kin_data = dataset.data.kin_pos.copy()
         if use_LFADS:
             all_rates_data = dataset.data.lfads_rates
         else:
             all_rates_data = dataset.data.spikes_smooth_25
 
-        #all_rates_data = dataset.data.spikes_smooth_100
     kin_column_names = all_kin_data.columns
     all_kin_data['Original_Index'] = np.arange(len(all_kin_data))
     all_kin_data_nonNan = all_kin_data.dropna().copy()
