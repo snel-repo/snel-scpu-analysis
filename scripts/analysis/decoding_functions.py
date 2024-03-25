@@ -10,7 +10,7 @@ from sklearn.metrics import r2_score
 import pandas as pd
 import matplotlib.pyplot as plt
 from scipy import signal
-
+SAMPLE_RATE = 500 # hertz
 """
 This function takes a numpy array and returns concatenated data based on start and stop indices
 """
@@ -45,7 +45,6 @@ def return_all_nonNan_slice(dataset, use_smooth_data: bool = True, use_LFADS: bo
     all_kin_data['Original_Index'] = np.arange(len(all_kin_data))
     all_kin_data_nonNan = all_kin_data.dropna().copy()
     non_Nan_indices = all_kin_data_nonNan['Original_Index'].values
-    print(non_Nan_indices)
     rates_slice = all_rates_data.iloc[non_Nan_indices]
     return all_kin_data_nonNan, rates_slice, kin_column_names
 
@@ -61,29 +60,33 @@ def linear_regression_train_val(x, y, alpha=0, folds=5):
     x is 2D array of shape (n_bins, n_channels) which is (samples, features)
     y is 1D array of shape (n_bins,) where each value is kinematic data
     """
-
+    from sklearn.preprocessing import StandardScaler
     kf = KFold(n_splits=folds,  shuffle=True, random_state=42)
     lr = Ridge(alpha=alpha)
 
     r2_test = np.zeros(folds)
     r2_train = np.zeros(folds)
-    fold_mean_x = [] # for test data
-    fold_mean_y = [] # for test data
-    test_pred = np.zeros_like(y)
 
+    test_pred = np.zeros_like(y)
+    scaler = StandardScaler()
     for split_num, (train_ix, test_ix) in enumerate(kf.split(x)):
         x_train, x_test = x[train_ix, :], x[test_ix, :]
         y_train, y_test = y[train_ix], y[test_ix]
 
+        # normalize predictor
+        x_train = scaler.fit_transform(x_train)
+        x_test = scaler.transform(x_test)
+
+        # normalize target
+        y_train = scaler.fit_transform(y_train.reshape(-1, 1)).ravel()
+        y_test = scaler.transform(y_test.reshape(-1, 1)).ravel()
 
         lr.fit(x_train, y_train)
         test_pred[test_ix] = lr.predict(x_test)
         train_pred = lr.predict(x_train)
         r2_test[split_num] = r2_score(y_test, test_pred[test_ix])
         r2_train[split_num] = r2_score(y_train, train_pred)
-        
-        fold_mean_x.append(np.mean(x_test,axis=0))
-        fold_mean_y.append(np.mean(y_test))
+
     
     test_sem = np.std(r2_test) / np.sqrt(folds)
     train_sem = np.std(r2_train) / np.sqrt(folds)
@@ -97,6 +100,7 @@ def linear_regression_train_val(x, y, alpha=0, folds=5):
 def append_kinematic_angle_data(all_kin_df: pd.DataFrame) -> pd.DataFrame:
     """
         Calculates and Appends knee and ankle angle data to kinematic data and returns all kin data and angles in one dataframe
+        Return angles are in degrees
     """
     # get knee and ankle angle data
     ankle_kinematics_np = all_kin_df[["ankle_x", "ankle_y"]].values
@@ -119,8 +123,16 @@ def append_kinematic_angle_data(all_kin_df: pd.DataFrame) -> pd.DataFrame:
     mag_ankle_to_toe = np.linalg.norm(ankle_to_toe_vectors, axis=1)
 
     # Angle calculation
-    knee_angles_vectorized = np.arccos(dot_product_knee / (mag_hip_to_knee * mag_knee_to_ankle)) * (180 / np.pi)
-    ankle_angles_vectorized = np.arccos(dot_product_ankle / (mag_knee_to_ankle * mag_ankle_to_toe)) * (180 / np.pi)
+    knee_angles_vectorized = np.arccos(dot_product_knee / (mag_hip_to_knee * mag_knee_to_ankle)) 
+    ankle_angles_vectorized = np.arccos(dot_product_ankle / (mag_knee_to_ankle * mag_ankle_to_toe))
+
+    # phase unwrapping for knee and ankle angles
+    knee_angles_vectorized = np.unwrap(knee_angles_vectorized)
+    ankle_angles_vectorized = np.unwrap(ankle_angles_vectorized)
+
+    # convert to degrees
+    knee_angles_vectorized = np.degrees(knee_angles_vectorized)
+    ankle_angles_vectorized = np.degrees(ankle_angles_vectorized)
 
     
     all_kin_df["knee_angle"] = knee_angles_vectorized
@@ -133,6 +145,9 @@ def plot_rates_vel_reg(regression_vel_slice, regression_rates_slice, orig_indice
     """
     Plots velocity and rates (input to linear regression model)
     """
+
+    assert len(orig_indices) == len(regression_vel_slice), "Length of original indices must be the same as the length of the data"
+    assert len(orig_indices) == regression_rates_slice.shape[0], "Length of original indices must be the same as the length of the data"
     fig, ax = plt.subplots(2, 1, figsize=(6, 10))
     
     fig.suptitle(f'Velocity and Rates indices {orig_indices[0], orig_indices[-1]}')
@@ -146,7 +161,7 @@ def plot_rates_vel_reg(regression_vel_slice, regression_rates_slice, orig_indice
     c = ax[1].pcolor(regression_rates_slice.T, cmap='viridis', vmin=0, vmax=vmax)
     ax[1].set_title('Rates')
     ax[1].set_xlabel('Time (bins)')
-    ax[1].set_ylabel('Rates')
+    ax[1].set_ylabel('Channels')
     plt.colorbar(c)
     plt.show()
 
@@ -164,7 +179,7 @@ def plot_psd_kinematic_data(kin_slice, use_smooth_data, bin_size=2):
     ax.set_ylabel('PSD [V**2/Hz]')
     plt.show()
 
-def preprocessing(dataset, column_name, use_smooth_data, start_indices, stop_indices, plot=False, use_LFADS=True):
+def preprocessing(dataset, column_name, use_smooth_data, start_indices, stop_indices, plot=False, use_LFADS=True, use_velocity=True):
     """
         preprocessing steps. output will be used for linear regression
     """
@@ -175,9 +190,22 @@ def preprocessing(dataset, column_name, use_smooth_data, start_indices, stop_ind
    
     all_kin_slice_and_angle_df = append_kinematic_angle_data(all_kin_df)
 
-    kin_slice = all_kin_slice_and_angle_df[column_name].values
-    regression_vel_slice = kin_slice
-    #regression_vel_slice = diff_filter(kin_slice)
+    regression_vel_slice = all_kin_slice_and_angle_df[column_name].values
+
+   
+
+    cutoff_freq = 5
+    nyquist = 0.5 * SAMPLE_RATE
+    normal_cutoff = cutoff_freq / nyquist
+    b, a = signal.butter(2, normal_cutoff, btype='low', analog=False)
+
+    if use_velocity:
+        regression_vel_slice = diff_filter(regression_vel_slice)
+
+    regression_vel_slice = signal.filtfilt(b, a, regression_vel_slice)
+
+
+
     regression_rates_slice = np.log(rates_slice + 1e-10)
 
     # subselect data from non NaN indices
@@ -191,18 +219,18 @@ def preprocessing(dataset, column_name, use_smooth_data, start_indices, stop_ind
         regression_rates_slice = concat_data_given_start_stop_indices(regression_rates_slice, start_indices, stop_indices)
         
         orig_indices = concat_data_given_start_stop_indices(all_kin_df['Original_Index'].values, start_indices, stop_indices)
-        print(f"Orig_indices: {orig_indices}")
-
-    index_smallest_10 = np.argpartition(regression_vel_slice, 10)[:10]
-    index_largest_10 = np.argpartition(regression_vel_slice, -10)[-10:]
-    outlier_indices = np.concatenate((index_smallest_10, index_largest_10))
+    else:
+        orig_indices = all_kin_df['Original_Index'].values
+    # index_smallest_10 = np.argpartition(regression_vel_slice, 10)[:10]
+    # index_largest_10 = np.argpartition(regression_vel_slice, -10)[-10:]
+    # outlier_indices = np.concatenate((index_smallest_10, index_largest_10))
     
     # outlier_min = np.argmin(regression_vel_slice)
     # val_min = regression_vel_slice[outlier_min]
     # print(val_min)
     # outlier_max = np.argmax(regression_vel_slice)
-    regression_vel_slice = np.delete(regression_vel_slice, outlier_indices)
-    regression_rates_slice = np.delete(regression_rates_slice, outlier_indices, axis=0)
+    # regression_vel_slice = np.delete(regression_vel_slice, outlier_indices)
+    # regression_rates_slice = np.delete(regression_rates_slice, outlier_indices, axis=0)
 
     # apply wiener filter
     # m = 20
