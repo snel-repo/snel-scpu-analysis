@@ -102,3 +102,14 @@ def load_cfgs(yaml_config_path: str) -> typing.Tuple[typing.Dict[str, str], typi
     merge_config = lfads_dataset_cfg["MERGE_PARAMETERS"]
 
     return path_config, ld_cfg, merge_config
+
+def find_kinematic_ranges(kinematic_data):
+    is_tracking = np.where(~kinematic_data.isna())[0]
+    change_ixs = np.where(np.diff(is_tracking) != 1)
+    start_ixs = [is_tracking[0]]
+    end_ixs = []
+    for change_ix in change_ixs[0]:
+        end_ixs.append(is_tracking[change_ix])
+        start_ixs.append(is_tracking[change_ix+1])
+    end_ixs.append(is_tracking[-1])
+    return start_ixs, end_ixs

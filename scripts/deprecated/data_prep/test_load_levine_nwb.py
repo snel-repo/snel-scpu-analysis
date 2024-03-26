@@ -20,7 +20,7 @@ logger.addHandler(handler)
 # %%
 
 base_dir = "/snel/share/share/derived/scpu_snel/NWB/"
-ds_name = "NP_AAV6-2_ReaChR_184500_kilosort.nwb"
+ds_name = "NP_AAV6-2_ReaChR_1845.nwb"
 
 ds_path = os.path.join(base_dir, ds_name)
 logger.info(f"Loading {ds_name} from NWB")
@@ -94,4 +94,20 @@ for i in range(plot_n_chans):
         ax.spines['right'].set_visible(False)
         ax.spines['top'].set_visible(False)
 fig.tight_layout()
+# %% === plot kinematics
+
+alpha = 0.8
+plt.plot(ds.data.kin_pos.hip_x.values, -1*ds.data.kin_pos.hip_y.values, alpha=alpha, label="hip")
+plt.plot(ds.data.kin_pos.knee_x.values, -1*ds.data.kin_pos.knee_y.values, alpha=alpha, label="knee")
+plt.plot(ds.data.kin_pos.ankle_x.values, -1*ds.data.kin_pos.ankle_y.values, alpha=alpha, label="ankle")
+plt.plot(ds.data.kin_pos.toe_x.values, -1*ds.data.kin_pos.toe_y.values, alpha=alpha, label="toe")
+
+
+
+#plt.plot(ds.data.kin_pos.iliac_crest_x.values, -1*ds.data.kin_pos.iliac_crest_y.values, alpha=alpha, label="iliac")
+plt.legend()
+ax = plt.gca()
+ax.spines["top"].set_visible(False)
+ax.spines["right"].set_visible(False)
+ax.set_title(ds_name.split(".")[0])
 # %%
